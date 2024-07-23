@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Vision Model Table</title>
+    <style>
+        body {
+            background-color: #161b22;
+            color: #f9f9f9;
+            font-family: Arial, sans-serif;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 0 auto; /* Center table */
+        }
+        th, td {
+            border: 1px solid #f9f9f9; /* Text color for border */
+            text-align: center;
+            padding: 8px;
+        }
+        th {
+            background-color: #004D40;
+            color: black; /* For contrast against light background */
+        }
+        .main-header {
+            background-color: #004D40;
+        }
+		a {
+		  color: #00bf9e; /* Change this to your desired color */
+		}
+		a:visited {
+		  color: #00bf9e; /* Color for visited links */
+	
+	00bf9e	
+
+
+    </style>
+</head>
+<body>
+<table>
+    <tr>
+        <th rowspan="2">Model Name</th>
+        <th colspan="2" class="main-header">CPU Metrics</th>
+        <th colspan="2" class="main-header">GPU Metrics</th>
+    </tr>
+    <tr>
+        <th>Tokens/sec</th>
+        <th>Memory</th>
+        <th>Tokens/sec</th>
+        <th>Memory</th>
+    </tr>
+    <tr>
+        <td><a href="https://huggingface.co/microsoft/Florence-2-base">Microsoft-Florence2-Base - 223m</a></td>
+        <td>36.41</td>
+        <td>5.0 GB</td>
+        <td>163.06</td>
+        <td>2.6 GB</td>
+    </tr>
+    <tr>
+        <td><a href="https://huggingface.co/microsoft/Florence-2-large">Microsoft-Florence2-Large - 772m</a></td>
+        <td>15.77</td>
+        <td>10.0 GB</td>
+        <td>113.32</td>
+        <td>5.3 GB</td>
+    </tr>
+	<tr>
+        <td><a href="https://huggingface.co/vikhyatk/moondream2">Moondream2 - 2b</a></td>
+        <td>N/A</td>
+        <td>N/A</td>
+        <td>82.28</td>
+        <td>4.6 GB</td>
+    </tr>
+</table>
+</body>
+</html>

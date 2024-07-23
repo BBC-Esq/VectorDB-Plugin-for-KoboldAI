@@ -1,0 +1,77 @@
+python -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
+pip install --no-cache-dir https://download.pytorch.org/whl/cu121/torch-2.2.2%2Bcu121-cp311-cp311-win_amd64.whl
+pip install --no-cache-dir https://download.pytorch.org/whl/cu121/torchvision-0.17.2%2Bcu121-cp311-cp311-win_amd64.whl
+pip install --no-cache-dir PySide6==6.6.3.1
+pip install --no-cache-dir PyYAML==6.0.1
+pip install --no-cache-dir ctranslate2==4.3.1
+pip install --no-cache-dir av==12.0.0
+pip install --no-cache-dir langchain-community==0.2.5
+pip install --no-cache-dir --no-deps -U git+https://github.com/shashikg/WhisperS2T.git
+pip install --no-cache-dir rich==13.7.1
+pip install --no-cache-dir termcolor==2.4.0
+# MANUALLY INSTALL PILLOW
+pip install --no-cache-dir pillow==10.4.0
+pip install --no-cache-dir tqdm==4.66.4
+pip install --no-cache-dir transformers==4.40.2
+pip install --no-cache-dir InstructorEmbedding==1.0.1
+pip install --no-cache-dir sentence-transformers==3.0.1
+pip install --no-cache-dir langchain-huggingface==0.0.3
+# GUI LOADS
+pip install --no-cache-dir nvidia-cuda-runtime-cu12==12.2.140
+pip install --no-cache-dir nvidia-cublas-cu12==12.2.5.6
+# TRANSCRIPTION WORKS
+pip install --no-cache-dir tiledb==0.27.1
+pip install --no-cache-dir tiledb-vector-search==0.2.2
+pip install --no-cache-dir docx2txt==0.8
+pip install --no-cache-dir Markdown==3.6
+pip install --no-cache-dir openpyxl==3.1.2
+pip install --no-cache-dir python-docx==1.1.0
+pip install --no-cache-dir unstructured==0.13.4
+pip install --no-cache-dir xlrd==2.0.1
+pip install --no-cache-dir pypandoc==1.13
+pip install --no-cache-dir langchain==0.2.5
+pip install --no-cache-dir PyMuPDF==1.24.2
+pip install --no-cache-dir msg-parser==1.2.0
+pip install --no-cache-dir einops==0.8.0
+pip install --no-cache-dir timm==0.9.16
+pip install --no-cache-dir https://github.com/bdashore3/flash-attention/releases/download/v2.5.9.post1/flash_attn-2.5.9.post1+cu122torch2.2.2cxx11abiFALSE-cp311-cp311-win_amd64.whl
+pip install --no-cache-dir accelerate==0.29.3
+pip install --no-cache-dir nvidia-ml-py
+pip install --no-cache-dir openai-whisper==20231117
+pip install --no-cache-dir optimum==1.19.1
+pip install --no-cache-dir platformdirs==4.2.1
+
+
+
+pip install --no-cache-dir https://download.pytorch.org/whl/cu121/torchaudio-2.2.2%2Bcu121-cp311-cp311-win_amd64.whl
+
+pip install --no-cache-dir https://github.com/jakaline-dev/Triton_win/releases/download/3.0.0/triton-3.0.0-cp311-cp311-win_amd64.whl
+
+pip install --no-cache-dir https://download.pytorch.org/whl/cpu/torch-2.2.2%2Bcpu-cp311-cp311-win_amd64.whl#sha256=88e63c916e3275fa30a220ee736423a95573b96072ded85e5c0171fd8f37a755
+pip install --no-cache-dir https://download.pytorch.org/whl/cpu/torchvision-0.17.2%2Bcpu-cp311-cp311-win_amd64.whl#sha256=54ae4b89038065e7393c65bc8ff141d1bf3c2f70f88badc834247666608ba9f4
+pip install --no-cache-dir https://download.pytorch.org/whl/cpu/torchaudio-2.2.2%2Bcpu-cp311-cp311-win_amd64.whl#sha256=6e718df4834f9cef28b7dc1edc9ceabfe477d4dbd5527b51234e96bf91465d9d
+
+pip install --no-cache-dir nvidia-cudnn-cu12==8.9.7.29
+
+pip install --no-cache-dir bitsandbytes==0.43.1
+
+pip install --no-cache-dir fsspec==2024.5.0
+
+pip install --no-cache-dir numpy==1.26.4
+
+pip install --no-cache-dir openai==1.23.6
+
+pip install --no-cache-dir pandas==2.2.2
+
+pip install --no-cache-dir psutil==5.9.8
+
+pip install --no-cache-dir scipy==1.13.0
+pip install --no-cache-dir sounddevice==0.4.6
+
+pip install --no-cache-dir webdataset==0.2.86
+
+pip install --no-cache-dir xformers==0.0.25.post1
+
+
+pip freeze > requirements_uninstall.txt && pip uninstall -r requirements_uninstall.txt -y && del requirements_uninstall.txt
