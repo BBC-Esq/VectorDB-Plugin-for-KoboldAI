@@ -12,7 +12,7 @@
 2) 📁[Git](https://git-scm.com/downloads)
 3) 📁[Git Large File Storage](https://git-lfs.com/).
 4) 🌐[Pandoc](https://github.com/jgm/pandoc/releases).
-5) CUDA is technically "required" but the installation script installs it automatically.
+5) CUDA is technically "required" but the installation script installs it automatically.  You do not need to have it installed systemwide.
 6) Build Tools.
    > Certain dependencies don't have pre-compiled "wheels" so you must build them with something like [Microsoft Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) and/or [Visual Studio](https://visualstudio.microsoft.com/).  I recommend Visual Studio, but make sure to select the "Desktop development with C++" extension and check the four boxes on the right containing "SDK."
 
