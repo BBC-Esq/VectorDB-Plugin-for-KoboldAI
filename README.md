@@ -50,3 +50,9 @@ python setup_windows.py
 ```
 python gui.py
 ```
+
+## Uninstalling
+If you need to try reinstalling for any reason run this command to uninstall everything and try again:
+```
+pip freeze > requirements_uninstall.txt && pip uninstall -r requirements_uninstall.txt -y && del requirements_uninstall.txt
+```
