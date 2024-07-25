@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QTextEdit, QPushButton, QCh
                                QApplication, QComboBox)
 
 from utilities import check_preconditions_for_submit_question
+from chat_kobold import KoboldChat
 
 logging.basicConfig(level=logging.DEBUG, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -36,6 +37,7 @@ class DatabaseQueryTab(QWidget):
         self.gui_signals = GuiSignals()
         self.initWidgets()
         self.setup_signals()
+        self.kobold_chat = None
 
     def initWidgets(self):
         layout = QVBoxLayout(self)
@@ -49,13 +51,6 @@ class DatabaseQueryTab(QWidget):
         self.database_pulldown = RefreshingComboBox(self)
         self.database_pulldown.addItems(self.load_created_databases())
         hbox1_layout.addWidget(self.database_pulldown)
-
-        self.model_combo_box = QComboBox()
-        hbox1_layout.addWidget(self.model_combo_box)
-
-        self.eject_button = QPushButton("Eject Local Model")
-        self.eject_button.setEnabled(False)
-        hbox1_layout.addWidget(self.eject_button)
 
         layout.addLayout(hbox1_layout)
 
@@ -78,7 +73,10 @@ class DatabaseQueryTab(QWidget):
         layout.addLayout(hbox2_layout)
 
     def setup_signals(self):
-        pass
+        self.gui_signals.response_signal.connect(self.update_response)
+        self.gui_signals.citations_signal.connect(self.display_citations)
+        self.gui_signals.error_signal.connect(self.show_error_message)
+        self.gui_signals.finished_signal.connect(self.on_submission_finished)
 
     def load_created_databases(self):
         if self.config_path.exists():
@@ -88,14 +86,60 @@ class DatabaseQueryTab(QWidget):
         return []
 
     def on_submit_button_clicked(self):
+        if self.kobold_chat is not None:
+            return
+
         script_dir = Path(__file__).resolve().parent
         is_valid, error_message = check_preconditions_for_submit_question(script_dir)
         if not is_valid:
             QMessageBox.warning(self, "Error", error_message)
             return
 
-        # Placeholder for future functionality
-        pass
+        self.submit_button.setDisabled(True)
+        user_question = self.text_input.toPlainText()
+        chunks_only = self.chunks_only_checkbox.isChecked()
+        selected_database = self.database_pulldown.currentText()
+
+        self.kobold_chat = KoboldChat()
+        
+        self.connect_kobold_chat_signals()
+
+        self.kobold_chat.ask_kobold(user_question, chunks_only, selected_database)
+
+        self.read_only_text.clear()
+
+    def connect_kobold_chat_signals(self):
+        self.kobold_chat.signals.response_signal.connect(self.update_response)
+        self.kobold_chat.signals.error_signal.connect(self.show_error_message)
+        self.kobold_chat.signals.finished_signal.connect(self.on_submission_finished)
+        self.kobold_chat.signals.citation_signal.connect(self.display_citations)
+
+    def disconnect_kobold_chat_signals(self):
+        if self.kobold_chat:
+            self.kobold_chat.signals.response_signal.disconnect(self.update_response)
+            self.kobold_chat.signals.error_signal.disconnect(self.show_error_message)
+            self.kobold_chat.signals.finished_signal.disconnect(self.on_submission_finished)
+            self.kobold_chat.signals.citation_signal.disconnect(self.display_citations)
+
+    def update_response(self, response_chunk):
+        response_chunk = response_chunk.lstrip('\n')
+        self.read_only_text.insertPlainText(response_chunk)
+        self.read_only_text.ensureCursorVisible()
+        QApplication.processEvents()
+
+    def display_citations(self, citations):
+        self.read_only_text.append("\n\nCitations:\n" + citations)
+
+    def show_error_message(self, error_message):
+        QMessageBox.warning(self, "Error", error_message)
+        self.submit_button.setDisabled(False)
+
+    def on_submission_finished(self):
+        self.submit_button.setDisabled(False)
+        if self.kobold_chat:
+            self.disconnect_kobold_chat_signals()
+            self.kobold_chat = None
+        logging.debug("Cleaned up after submission")
 
     def on_copy_response_clicked(self):
         clipboard = QApplication.clipboard()

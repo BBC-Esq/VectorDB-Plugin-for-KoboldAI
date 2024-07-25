@@ -6,7 +6,7 @@ VECTOR_MODELS = {
             'max_sequence': 512,
             'size_mb': 134,
             'repo_id': 'BAAI/bge-small-en-v1.5',
-            'cache_dir': 'BAAI--bge-small-en-v1.5',
+            'cache_dir': 'BAAI_bge-small-en-v1.5',
             'type': 'vector'
         },
         {
@@ -15,7 +15,7 @@ VECTOR_MODELS = {
             'max_sequence': 512,
             'size_mb': 438,
             'repo_id': 'BAAI/bge-base-en-v1.5',
-            'cache_dir': 'BAAI--bge-base-en-v1.5',
+            'cache_dir': 'BAAI-bge-base-en-v1.5',
             'type': 'vector'
         },
         {
@@ -24,7 +24,7 @@ VECTOR_MODELS = {
             'max_sequence': 512,
             'size_mb': 1340,
             'repo_id': 'BAAI/bge-large-en-v1.5',
-            'cache_dir': 'BAAI--bge-large-en-v1.5',
+            'cache_dir': 'BAAI_bge-large-en-v1.5',
             'type': 'vector'
         },
     ],
@@ -35,7 +35,7 @@ VECTOR_MODELS = {
             'max_sequence': 512,
             'size_mb': 439,
             'repo_id': 'hkunlp/instructor-base',
-            'cache_dir': 'hkunlp--instructor-base',
+            'cache_dir': 'hkunlp_instructor-base',
             'type': 'vector'
         },
         {
@@ -44,7 +44,7 @@ VECTOR_MODELS = {
             'max_sequence': 512,
             'size_mb': 1340,
             'repo_id': 'hkunlp/instructor-large',
-            'cache_dir': 'hkunlp--instructor-large',
+            'cache_dir': 'hkunlp_instructor-large',
             'type': 'vector'
         },
         {
@@ -53,7 +53,7 @@ VECTOR_MODELS = {
             'max_sequence': 512,
             'size_mb': 4960,
             'repo_id': 'hkunlp/instructor-xl',
-            'cache_dir': 'hkunlp--instructor-xl',
+            'cache_dir': 'hkunlp_instructor-xl',
             'type': 'vector'
         },
     ],
@@ -64,7 +64,7 @@ VECTOR_MODELS = {
             'max_sequence': 256,
             'size_mb': 120,
             'repo_id': 'sentence-transformers/all-MiniLM-L12-v2',
-            'cache_dir': 'sentence-transformers--all-MiniLM-L12-v2',
+            'cache_dir': 'sentence-transformers_all-MiniLM-L12-v2',
             'type': 'vector'
         },
         {
@@ -73,7 +73,7 @@ VECTOR_MODELS = {
             'max_sequence': 384,
             'size_mb': 438,
             'repo_id': 'sentence-transformers/all-mpnet-base-v2',
-            'cache_dir': 'sentence-transformers--all-mpnet-base-v2',
+            'cache_dir': 'sentence-transformers_all-mpnet-base-v2',
             'type': 'vector'
         },
     ],
@@ -84,7 +84,7 @@ VECTOR_MODELS = {
             'max_sequence': 512,
             'size_mb': 67,
             'repo_id': 'thenlper/gte-small',
-            'cache_dir': 'thenlper--gte-small',
+            'cache_dir': 'thenlper_gte-small',
             'type': 'vector'
         },
         {
@@ -93,7 +93,7 @@ VECTOR_MODELS = {
             'max_sequence': 512,
             'size_mb': 219,
             'repo_id': 'thenlper/gte-base',
-            'cache_dir': 'thenlper--gte-base',
+            'cache_dir': 'thenlper_gte-base',
             'type': 'vector'
         },
         {
@@ -102,7 +102,7 @@ VECTOR_MODELS = {
             'max_sequence': 512,
             'size_mb': 670,
             'repo_id': 'thenlper/gte-large',
-            'cache_dir': 'thenlper--gte-large',
+            'cache_dir': 'thenlper_gte-large',
             'type': 'vector'
         },
     ],
@@ -114,21 +114,21 @@ VISION_MODELS = {
         'precision': 'autoselect',
         'size': '232m',
         'repo_id': 'microsoft/Florence-2-base',
-        'cache_dir': 'microsoft--Florence-2-base',
+        'cache_dir': 'vision',
         'requires_cuda': False
     },
     'Florence-2-large': {
         'precision': 'autoselect',
         'size': '770m',
         'repo_id': 'microsoft/Florence-2-large',
-        'cache_dir': 'microsoft--Florence-2-large',
+        'cache_dir': 'vision',
         'requires_cuda': False
     },
     'Moondream2': {
         'precision': 'float16',
         'size': '2b',
         'repo_id': 'vikhyatk/moondream2',
-        'cache_dir': 'vikhyatk--moondream2',
+        'cache_dir': 'vision',
         'requires_cuda': True
     }
 }

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QWidget, QPushButton, QVBoxLayout, QHBoxLayout, Q
 import database_interactions
 from choose_documents_and_vector_model import select_embedding_model_directory, choose_documents_directory
 from utilities import check_preconditions_for_db_creation, open_file, delete_file, backup_database
+from constants import VECTOR_MODELS
 
 datasets_logger = logging.getLogger('datasets')
 datasets_logger.setLevel(logging.WARNING)
@@ -124,25 +125,16 @@ class DatabasesTab(QWidget):
 
     def populate_model_combobox(self):
         self.model_combobox.clear()
-        self.model_combobox.addItem("Select a model", None)  # Add a blank item
+        self.model_combobox.addItem("Select a model", None)
 
-        script_dir = Path(__file__).resolve().parent
-        vector_dir = script_dir / "Models" / "vector"
-        
-        if not vector_dir.exists():
-            print(f"Warning: Vector directory not found at {vector_dir}")
-            return
+        for provider, models in VECTOR_MODELS.items():
+            for model in models:
+                repo_id = model['repo_id']
+                display_name = model['name']
+                self.model_combobox.addItem(display_name, repo_id)
 
-        model_found = False
-        for folder in vector_dir.iterdir():
-            if folder.is_dir():
-                model_found = True
-                display_name = folder.name.split('--')[-1]
-                full_path = str(folder)
-                self.model_combobox.addItem(display_name, full_path)
-        
-        if not model_found:
-            print(f"Warning: No model directories found in {vector_dir}")
+        if self.model_combobox.count() == 1:
+            print("Warning: No models found in VECTOR_MODELS dictionary")
 
     def sync_combobox_with_config(self):
         config_path = Path(__file__).resolve().parent / "config.yaml"

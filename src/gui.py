@@ -12,7 +12,6 @@ from initialize import main as initialize_system
 from gui_tabs import create_tabs
 from utilities import list_theme_files, make_theme_changer, load_stylesheet
 
-# Set up logging
 logging.basicConfig(filename='gui_log.txt', level=logging.DEBUG, 
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -45,7 +44,7 @@ class DocQA_GUI(QWidget):
 
     def init_ui(self):
         try:
-            self.setWindowTitle('LM Studio VectorDB Plugin - www.chintellalaw.com')
+            self.setWindowTitle('KoboldCPP VectorDB Plugin - www.chintellalaw.com')
             self.setGeometry(300, 300, 700, 800)
             self.setMinimumSize(350, 410)
             

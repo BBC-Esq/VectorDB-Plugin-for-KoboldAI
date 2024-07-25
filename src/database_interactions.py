@@ -48,8 +48,9 @@ class CreateVectorDB:
             return yaml.safe_load(stream)
     
     @torch.inference_mode()
-    def initialize_vector_model(self, embedding_model_name, config_data):
-        EMBEDDING_MODEL_NAME = config_data.get("EMBEDDING_MODEL_NAME")
+    def initialize_vector_model(self, config_data):
+        model_name = config_data.get("EMBEDDING_MODEL_NAME")
+        cache_folder = Path.cwd() / "Models" / "vector"
         compute_device = config_data['Compute_Device']['database_creation']
         model_kwargs = {"device": compute_device, "trust_remote_code": True}
         encode_kwargs = {'normalize_embeddings': True, 'batch_size': 8}
@@ -58,55 +59,59 @@ class CreateVectorDB:
             encode_kwargs['batch_size'] = 2
         else:
             batch_size_mapping = {
-                'sentence-t5-xxl': 1,
-                ('instructor-xl', 'sentence-t5-xl'): 2,
-                'instructor-large': 3,
-                ('jina-embedding-l', 'bge-large', 'gte-large', 'roberta-large'): 4,
-                'jina-embedding-s': 9,
-                ('bge-small', 'gte-small'): 10,
-                ('MiniLM',): 30,
+                'instructor-xl': 2,
+                'bge-large': 4,
+                'instructor-large': 4,
+                'gte-large': 4,
+                'instructor-base': 6,
+                'mpnet': 8,
+                'bge-base': 8,
+                'gte-base': 8,
+                'bge-small': 10,
+                'gte-small': 10,
+                'MiniLM': 30,
             }
 
             for key, value in batch_size_mapping.items():
                 if isinstance(key, tuple):
-                    if any(model_name_part in EMBEDDING_MODEL_NAME for model_name_part in key):
+                    if any(model_name_part in model_name for model_name_part in key):
                         encode_kwargs['batch_size'] = value
                         break
                 else:
-                    if key in EMBEDDING_MODEL_NAME:
+                    if key in model_name:
                         encode_kwargs['batch_size'] = value
                         break
 
-        if "instructor" in embedding_model_name:
+        if "instructor" in model_name:
             encode_kwargs['show_progress_bar'] = True
 
             model = HuggingFaceInstructEmbeddings(
-                model_name=embedding_model_name,
+                model_name=model_name,
                 model_kwargs=model_kwargs,
-                encode_kwargs=encode_kwargs,
+                cache_folder=str(cache_folder)
             )
             
-        elif "bge" in embedding_model_name:
+        elif "bge" in model_name:
             query_instruction = config_data['embedding-models']['bge'].get('query_instruction')
             encode_kwargs['show_progress_bar'] = True
 
             model = HuggingFaceBgeEmbeddings(
-                model_name=embedding_model_name,
+                model_name=model_name,
                 model_kwargs=model_kwargs,
                 query_instruction=query_instruction,
-                encode_kwargs=encode_kwargs
+                cache_folder=str(cache_folder)
             )
         
         else:
             # model_kwargs["trust_remote_code"] = True
             model = HuggingFaceEmbeddings(
-                model_name=embedding_model_name,
+                model_name=model_name,
                 show_progress=True,
                 model_kwargs=model_kwargs,
-                encode_kwargs=encode_kwargs
+                encode_kwargs=encode_kwargs,
+                cache_folder=str(cache_folder)
             )
 
-        model_name = Path(EMBEDDING_MODEL_NAME).name
         my_cprint(f"{model_name} vector model loaded into memory.", "green")
         
         return model, encode_kwargs
@@ -224,7 +229,6 @@ class CreateVectorDB:
     @torch.inference_mode()
     def run(self):
         config_data = self.load_config(self.ROOT_DIRECTORY)
-        EMBEDDING_MODEL_NAME = config_data.get("EMBEDDING_MODEL_NAME")
         
         # create  a list to hold langchain "document objects"        
         # langchain_core.documents.base.Document
@@ -265,7 +269,7 @@ class CreateVectorDB:
             self.save_document_structures(texts) # optional for troubleshooting
 
             # initialize vector model
-            embeddings, encode_kwargs = self.initialize_vector_model(EMBEDDING_MODEL_NAME, config_data)
+            embeddings, encode_kwargs = self.initialize_vector_model(config_data)
 
             # create database
             if isinstance(texts, list) and texts:
@@ -303,11 +307,14 @@ class QueryVectorDB:
         compute_device = self.config['Compute_Device']['database_query']
         encode_kwargs = {'normalize_embeddings': True, 'batch_size': 1}
         
+        cache_folder = str(Path.cwd() / "Models" / "vector")
+
         if "instructor" in model_path:
             return HuggingFaceInstructEmbeddings(
                 model_name=model_path,
                 model_kwargs={"device": compute_device},
                 encode_kwargs=encode_kwargs,
+                cache_folder=cache_folder
             )
         elif "bge" in model_path:
             query_instruction = self.config['embedding-models']['bge']['query_instruction']
@@ -315,13 +322,15 @@ class QueryVectorDB:
                 model_name=model_path,
                 model_kwargs={"device": compute_device},
                 query_instruction=query_instruction,
-                encode_kwargs=encode_kwargs
+                encode_kwargs=encode_kwargs,
+                cache_folder=cache_folder
             )
         else:
             return HuggingFaceEmbeddings(
                 model_name=model_path,
                 model_kwargs={"device": compute_device, "trust_remote_code": True},
-                encode_kwargs=encode_kwargs
+                encode_kwargs=encode_kwargs,
+                cache_folder=cache_folder
             )
 
     def initialize_database(self):
