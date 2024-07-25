@@ -4,7 +4,7 @@
 
 
 
-* 🔥 Due to time constrains and ability to test, only supported on ```Windows``` systems with an ```Nvidia GPU```.  Feel free to contribute to support other setups!
+* 🔥 Due to time constrains and ability to test, only supported on ```Windows``` systems with an ```Nvidia GPU```.
 
 <div align="center"> <h2><u>REQUIREMENTS</h2></div>
   
