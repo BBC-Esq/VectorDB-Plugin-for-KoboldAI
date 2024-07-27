@@ -55,7 +55,7 @@ python gui.py
 
 ### Start Kobold
 * Navigate to KoboldCPP's github and download the appropriate .exe file or run ```python download_kobold.py``` from your virtual environment instead.
-* Selec any/all options you want and start the program, but make sure and uncheck the open browser option.  You can also check the "quiet" mode, which prevents the Kobold's command prompt window from printing everything in duplicate.
+* Select any/all options you want and start the program, but make sure and uncheck the open browser option.  You can also check the "quiet" mode, which prevents the Kobold's command prompt window from printing everything in duplicate.
 
 ## Uninstalling
 If you need to try reinstalling for any reason run this command to uninstall everything and try again:
