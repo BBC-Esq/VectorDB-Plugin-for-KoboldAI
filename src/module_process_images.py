@@ -152,7 +152,7 @@ class loader_moondream(BaseLoader):
         
         model = AutoModelForCausalLM.from_pretrained(model_id, 
                                                      trust_remote_code=True, 
-                                                     revision="2024-05-20",
+                                                     revision="2024-07-23",
                                                      torch_dtype=torch.float16,
                                                      cache_dir=cache_dir,
                                                      low_cpu_mem_usage=True).to(self.device)
