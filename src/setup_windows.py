@@ -61,11 +61,16 @@ if not tkinter_message_box("GPU Detection", message, type="yesno", yes_no=True):
 if not manual_installation_confirmation():
     sys.exit(1)
 
+start_time = time.time()
+
+subprocess.run([sys.executable, "-m", "pip", "install", "uv==0.2.32"], check=True)
+print("\033[92mInstalled uv package manager.\033[0m")
+
 def upgrade_pip_setuptools_wheel(max_retries=5, delay=3):
     upgrade_commands = [
-        [sys.executable, "-m", "pip", "install", "--upgrade", "pip", "--no-cache-dir"],
-        [sys.executable, "-m", "pip", "install", "--upgrade", "setuptools", "--no-cache-dir"],
-        [sys.executable, "-m", "pip", "install", "--upgrade", "wheel", "--no-cache-dir"]
+        [sys.executable, "-m", "uv", "pip", "install", "--upgrade", "pip", "--no-cache-dir"],
+        [sys.executable, "-m", "uv", "pip", "install", "--upgrade", "setuptools", "--no-cache-dir"],
+        [sys.executable, "-m", "uv", "pip", "install", "--upgrade", "wheel", "--no-cache-dir"]
     ]
     
     for command in upgrade_commands:
@@ -93,28 +98,33 @@ def upgrade_pip_setuptools_wheel(max_retries=5, delay=3):
 
 def pip_install_with_retry(library, max_retries=5, delay=3):
     if library.startswith("torch=="):
-        pip_args = ["pip", "install", "torch==2.2.2", "torchvision==0.17.2", "torchaudio==2.2.2", 
-                    "--index-url", "https://download.pytorch.org/whl/cu121", "--no-deps"]
+        pip_args_list = [
+            ["uv", "pip", "install", "https://download.pytorch.org/whl/cu121/torch-2.2.2%2Bcu121-cp311-cp311-win_amd64.whl#sha256=efbcfdd4399197d06b32f7c0e1711c615188cdd65427b933648c7478fb880b3f"],
+            ["uv", "pip", "install", "https://download.pytorch.org/whl/cu121/torchvision-0.17.2%2Bcu121-cp311-cp311-win_amd64.whl#sha256=10ad542aab6b47dbe73c441381986d50a7ed5021cbe01d593a14477ec1f067a0"],
+            ["uv", "pip", "install", "https://download.pytorch.org/whl/cu121/torchaudio-2.2.2%2Bcu121-cp311-cp311-win_amd64.whl#sha256=c7dee68cd3d2b889bab71d4a0c345bdc3ea2fe79a62b921a6b49292c605b6071"]
+        ]
     elif "@" in library or "git+" in library:
-        pip_args = ["pip", "install", library, "--no-deps"]
+        pip_args_list = [["uv", "pip", "install", library, "--no-deps"]]
     else:
-        pip_args = ["pip", "install", library, "--no-deps"]
-
-    for attempt in range(max_retries):
-        try:
-            print(f"\nAttempt {attempt + 1} of {max_retries}: Installing {library}")
-            print(f"Running command: {' '.join(pip_args)}")
-            result = subprocess.run(pip_args, check=True, capture_output=True, text=True, timeout=180)
-            print(f"Successfully installed {library}")
-            return attempt + 1
-        except subprocess.CalledProcessError as e:
-            print(f"Attempt {attempt + 1} failed. Error: {e.stderr.strip()}")
-            if attempt < max_retries - 1:
-                print(f"Retrying in {delay} seconds...")
-                time.sleep(delay)
-            else:
-                print(f"Failed to install {library} after {max_retries} attempts.")
-                return 0
+        pip_args_list = [["uv", "pip", "install", library, "--no-deps"]]
+    
+    for pip_args in pip_args_list:
+        for attempt in range(max_retries):
+            try:
+                print(f"\nAttempt {attempt + 1} of {max_retries}: Installing {pip_args[3]}")
+                print(f"Running command: {' '.join(pip_args)}")
+                result = subprocess.run(pip_args, check=True, capture_output=True, text=True, timeout=180)
+                print(f"Successfully installed {pip_args[3]}")
+                break
+            except subprocess.CalledProcessError as e:
+                print(f"Attempt {attempt + 1} failed. Error: {e.stderr.strip()}")
+                if attempt < max_retries - 1:
+                    print(f"Retrying in {delay} seconds...")
+                    time.sleep(delay)
+                else:
+                    print(f"Failed to install {pip_args[3]} after {max_retries} attempts.")
+                    return 0
+    return 1
 
 def install_libraries(libraries):
     failed_installations = []
@@ -294,7 +304,7 @@ full_install_libraries = [
 ]
 
 def pip_install_with_deps(library, max_retries=5, delay=3):
-    pip_args = ["pip", "install", library]
+    pip_args = ["uv", "pip", "install", library]
 
     for attempt in range(max_retries):
         try:
@@ -364,3 +374,10 @@ if all_failed:
 replace_pdf_file()
 replace_instructor_file()
 replace_sentence_transformer_file()
+
+end_time = time.time()
+total_time = end_time - start_time
+hours, rem = divmod(total_time, 3600)
+minutes, seconds = divmod(rem, 60)
+
+print(f"\033[92m\nTotal installation time: {int(hours):02d}:{int(minutes):02d}:{seconds:05.2f}\033[0m")
