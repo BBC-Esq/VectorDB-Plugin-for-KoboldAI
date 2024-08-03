@@ -1,3 +1,6 @@
+import multiprocessing
+multiprocessing.set_start_method('spawn')
+
 import sys
 import os
 from pathlib import Path
@@ -7,10 +10,20 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QTabWidget,
     QStyleFactory, QMenuBar
 )
-import multiprocessing
 from initialize import main as initialize_system
 from gui_tabs import create_tabs
 from utilities import list_theme_files, make_theme_changer, load_stylesheet
+
+# Print the current working directory
+print(f"Current working directory: {os.getcwd()}")
+
+# Check if we can write to the current directory
+try:
+    with open('test_write.txt', 'w') as f:
+        f.write("Testing write permissions")
+    os.remove('test_write.txt')
+except Exception as e:
+    print(f"Cannot write to the current directory: {e}")
 
 logging.basicConfig(filename='gui_log.txt', level=logging.DEBUG, 
                     format='%(asctime)s - %(levelname)s - %(message)s')
@@ -83,7 +96,7 @@ class DocQA_GUI(QWidget):
 def main():
     try:
         logging.info("Starting application")
-        multiprocessing.set_start_method('spawn')
+        # multiprocessing.set_start_method('spawn')
         app = QApplication(sys.argv)
         app.setStyleSheet(load_stylesheet('custom_stylesheet_steel_ocean.css'))
         ex = DocQA_GUI()
