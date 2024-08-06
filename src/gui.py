@@ -17,7 +17,7 @@ from gui_tabs import create_tabs
 from utilities import list_theme_files, make_theme_changer, load_stylesheet
 
 # Print the current working directory
-print(f"Current working directory: {os.getcwd()}")
+# print(f"Current working directory: {os.getcwd()}")
 
 # Check if we can write to the current directory
 try:
