@@ -2,11 +2,10 @@
 
 | Preset Option | Compatible Parameters | Incompatible Parameters | Notes |
 |---------------|----------------------|-------------------------|-------|
-| Use OpenBLAS | Most general parameters | `--usecublas`, `--usevulkan`, `--useclblast`, `--lowvram`, `--mmq`, `--rowsplit`, `--gpulayers`, `--tensor_split`, `--noavx2` | Default option for CPU-only systems |
+| Use CPU | `--usecpu` | `--usecublas`, `--usevulkan`, `--useclblast`, `--lowvram`, `--mmq`, `--rowsplit`, `--gpulayers`, `--tensor_split`, `--noavx2` | Default option for CPU-only systems |
 | Use CLBlast | `--useclblast`, `--gpulayers` | `--usecublas`, `--usevulkan`, `--noblas`, `--lowvram`, `--mmq`, `--rowsplit`, `--noavx2` | Must specify exactly 2 arguments for platform ID and device ID |
 | Use CuBLAS | `--usecublas`, `--gpulayers`, `--tensor_split`, `--lowvram`, `--mmq`, `--rowsplit` | `--usevulkan`, `--useclblast`, `--noblas`, `--noavx2` | Best option for NVIDIA GPUs |
 | Use Vulkan | `--usevulkan`, `--gpulayers`, `--tensor_split` | `--usecublas`, `--useclblast`, `--noblas`, `--lowvram`, `--mmq`, `--noavx2` | Compatible with a wide range of GPUs |
-| Use No BLAS | `--noblas` | `--usecublas`, `--usevulkan`, `--useclblast`, `--lowvram`, `--mmq`, `--rowsplit`, `--gpulayers`, `--tensor_split` | Slowest option, but most compatible |
 | CLBlast NoAVX2 (Old CPU) | Same as "Use CLBlast" | Same as "Use CLBlast" | Automatically sets `--noavx2` |
 | Vulkan NoAVX2 (Old CPU) | Same as "Use Vulkan" | Same as "Use Vulkan" | Automatically sets `--noavx2` |
 | NoAVX2 Mode (Old CPU) | Most general parameters | `--usecublas`, `--usevulkan`, `--useclblast` | Automatically sets `--noavx2` |
