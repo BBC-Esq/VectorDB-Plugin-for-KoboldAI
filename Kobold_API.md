@@ -20,11 +20,10 @@
 
 | Menu Option                  | koboldcpp_nocuda.exe | koboldcpp.exe | koboldcpp_oldcpu.exe | koboldcpp_cu12.exe |
 |------------------------------|:--------------------:|:-------------:|:--------------------:|:------------------:|
-| Use OpenBLAS                 |          ✓           |       ✓       |          (no AVX2)            |         ✓          |
+| Use UseCPU                 |          ✓           |       ✓       |          (no AVX2)            |         ✓          |
 | Use CLBlast                  |          ✓           |       ✓       |          ✓           |         ✓          |
 | Use CuBLAS                   |                      |       ✓ (CUDA 11)       |          ✓ (CUDA 11)           |         ✓ (CUDA 12)          |
 | Use Vulkan                   |          ✓           |       ✓       |          ✓           |         ✓          |
-| Use No BLAS                  |          ✓           |       ✓       |          ✓           |         ✓          |
 | CLBlast NoAVX2 (Old CPU)     |          ✓           |       ✓       |          ✓           |         ✓          |
 | Vulkan NoAVX2 (Old CPU)      |          ✓           |       ✓       |          ✓           |         ✓          |
 | NoAVX2 Mode (Old CPU)        |          ✓           |       ✓       |          ✓           |         ✓          |
