@@ -16,6 +16,41 @@
 > - The `--tensor_split` option is only available for CuBLAS and Vulkan modes.
 > - The `--lowvram`, `--mmq`, and `--rowsplit` options are only available for CuBLAS mode.
 
+# KoboldCpp CLI Parameters/Flags (v1.75.2):
+
+| Flag/Parameter | Compatible Flags | Incompatible Flags | Notes |
+|----------------|------------------|---------------------|-------|
+| `--usecpu` | `--noavx2`, `--contextsize`, `--threads`, `--blasthreads`, `--blasbatchsize`, `--noshift`, `--nommap`, `--usemlock` | `--usecublas`, `--usevulkan`, `--useclblast`, `--gpulayers`, `--tensor_split` | Default CPU mode |
+| `--usecublas` | `--gpulayers`, `--tensor_split`, `--lowvram`, `--mmq`, `--rowsplit`, `--contextsize`, `--threads`, `--blasthreads`, `--blasbatchsize`, `--noshift`, `--nommap`, `--usemlock` | `--usecpu`, `--usevulkan`, `--useclblast`, `--noavx2` | For NVIDIA GPUs. Can specify GPU ID |
+| `--usevulkan` | `--gpulayers`, `--tensor_split`, `--contextsize`, `--threads`, `--blasthreads`, `--blasbatchsize`, `--noshift`, `--nommap`, `--usemlock` | `--usecpu`, `--usecublas`, `--useclblast`, `--noavx2`, `--lowvram`, `--mmq` | For various GPUs. Can specify Device ID |
+| `--useclblast` | `--gpulayers`, `--contextsize`, `--threads`, `--blasthreads`, `--blasbatchsize`, `--noshift`, `--nommap`, `--usemlock` | `--usecpu`, `--usecublas`, `--usevulkan`, `--noavx2`, `--tensor_split`, `--lowvram`, `--mmq` | Requires platform ID and device ID |
+| `--noavx2` | `--usecpu`, `--contextsize`, `--threads`, `--blasthreads`, `--blasbatchsize`, `--noshift`, `--nommap`, `--usemlock` | `--usecublas`, `--usevulkan`, `--useclblast` | Compatibility mode for older CPUs |
+| `--gpulayers` | `--usecublas`, `--usevulkan`, `--useclblast` | `--usecpu` | Specifies layers to offload to GPU |
+| `--tensor_split` | `--usecublas`, `--usevulkan` | `--usecpu`, `--useclblast` | For multi-GPU setups |
+| `--contextsize` | All flags | None | Sets maximum context size |
+| `--threads` | All flags | None | Sets number of CPU threads |
+| `--blasthreads` | All flags | None | Sets number of BLAS threads |
+| `--blasbatchsize` | All flags | None | Sets BLAS batch size |
+| `--noshift` | All flags | None | Disables context shifting |
+| `--nommap` | All flags | None | Disables memory mapping for model loading |
+| `--usemlock` | All flags | None | Enables mlock |
+| `--lowvram` | `--usecublas` | `--usecpu`, `--usevulkan`, `--useclblast` | Low VRAM mode for CUDA |
+| `--mmq` | `--usecublas` | `--usecpu`, `--usevulkan`, `--useclblast` | Enables QuantMatMul for CUDA |
+| `--rowsplit` | `--usecublas` | `--usecpu`, `--usevulkan`, `--useclblast` | Enables row splitting for multi-GPU CUDA |
+| `--lora` | All flags | None | Applies LoRA adapter |
+| `--ropeconfig` | All flags | None | Custom RoPE scaling |
+| `--smartcontext` | All flags | `--noshift` | Enables smart context (not recommended) |
+| `--debugmode` | All flags | None | Enables debug output |
+| `--highpriority` | All flags | None | Sets high process priority |
+| `--quiet` | All flags | None | Enables quiet mode |
+| `--multiuser` | All flags | None | Enables multi-user mode |
+| `--remotetunnel` | All flags | None | Creates remote tunnel |
+| `--ssl` | All flags | None | Enables SSL |
+| `--nocertify` | All flags | None | Allows insecure SSL connections |
+| `--password` | All flags | None | Sets access password |
+| `--flashattention` | All flags | None | Enables flash attention |
+| `--quantkv` | All flags | `--noshift` | Enables KV cache quantization |
+
 ## Kobold AI - Menu Options by Binary
 
 | Menu Option                  | koboldcpp_nocuda.exe | koboldcpp.exe | koboldcpp_oldcpu.exe | koboldcpp_cu12.exe |
