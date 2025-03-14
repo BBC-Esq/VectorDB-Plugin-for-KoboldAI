@@ -63,9 +63,6 @@ class DatabaseQueryTab(QWidget):
         self.copy_response_button.clicked.connect(self.on_copy_response_clicked)
         hbox2_layout.addWidget(self.copy_response_button)
 
-        self.chunks_only_checkbox = QCheckBox("Chunks Only")
-        hbox2_layout.addWidget(self.chunks_only_checkbox)
-
         self.submit_button = QPushButton("Submit Question")
         self.submit_button.clicked.connect(self.on_submit_button_clicked)
         hbox2_layout.addWidget(self.submit_button)
@@ -97,14 +94,13 @@ class DatabaseQueryTab(QWidget):
 
         self.submit_button.setDisabled(True)
         user_question = self.text_input.toPlainText()
-        chunks_only = self.chunks_only_checkbox.isChecked()
         selected_database = self.database_pulldown.currentText()
 
         self.kobold_chat = KoboldChat()
         
         self.connect_kobold_chat_signals()
 
-        self.kobold_chat.ask_kobold(user_question, chunks_only, selected_database)
+        self.kobold_chat.ask_kobold(user_question, selected_database)
 
         self.read_only_text.clear()
 

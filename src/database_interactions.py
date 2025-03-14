@@ -184,32 +184,6 @@ def create_vector_db_in_process(database_name):
     create_vector_db = CreateVectorDB(database_name=database_name)
     create_vector_db.run()
 
-def process_chunks_only_query(database_name, query, result_queue):
-    try:
-        query_db = QueryVectorDB(database_name)
-        contexts, metadata_list = query_db.search(query)
-
-        formatted_contexts = []
-        for index, (context, metadata) in enumerate(zip(contexts, metadata_list), start=1):
-            file_name = metadata.get('file_name', 'Unknown')
-            cleaned_context = re.sub(r'\n[ \t]+\n', '\n\n', context)
-            cleaned_context = re.sub(r'\n\s*\n\s*\n*', '\n\n', cleaned_context.strip())
-            formatted_context = (
-                f"{'-'*80}\n"
-                f"CONTEXT {index} | {file_name}\n"
-                f"{'-'*80}\n"
-                f"{cleaned_context}\n"
-            )
-            formatted_contexts.append(formatted_context)
-
-        result_queue.put("\n".join(formatted_contexts))
-    except Exception as e:
-        result_queue.put(f"Error querying database: {str(e)}")
-    finally:
-        if 'query_db' in locals():
-            query_db.cleanup()
-
-
 class CreateVectorDB:
     def __init__(self, database_name):
         self.ROOT_DIRECTORY = Path(__file__).resolve().parent

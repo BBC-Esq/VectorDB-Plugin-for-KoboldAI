@@ -6,10 +6,8 @@ import logging
 import yaml
 import os
 import traceback
-from PySide6.QtCore import Qt, QUrl, QThread, Signal as pyqtSignal
+from PySide6.QtCore import Qt, QThread, Signal as pyqtSignal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QFileDialog, QHBoxLayout, QMessageBox
 
 from module_process_images import choose_image_loader
@@ -17,20 +15,6 @@ from module_process_images import choose_image_loader
 CONFIG_FILE = 'config.yaml'
 
 logging.basicConfig(level=logging.DEBUG) # doublecheck how to suppress cuda version info messsage
-
-class CustomWebEnginePage(QWebEnginePage):
-    def acceptNavigationRequest(self, url, _type, isMainFrame):
-        if _type == QWebEnginePage.NavigationTypeLinkClicked:
-            logging.debug(f"Opening URL in system browser: {url.toString()}")
-            QDesktopServices.openUrl(url)
-            return False
-        return super().acceptNavigationRequest(url, _type, isMainFrame)
-
-    def createWindow(self, _type):
-        logging.debug(f"createWindow called with type: {_type}")
-        if _type == QWebEnginePage.WebBrowserTab or _type == QWebEnginePage.WebBrowserBackgroundTab:
-            return self
-        return None
 
 class ImageProcessorThread(QThread):
     finished = pyqtSignal(list)
@@ -45,8 +29,6 @@ class ImageProcessorThread(QThread):
             self.error.emit(error_msg)
 
 class VisionToolSettingsTab(QWidget):
-    HTML_FILE = 'vision_model_table.html'
-
     def __init__(self):
         super().__init__()
 
@@ -59,14 +41,6 @@ class VisionToolSettingsTab(QWidget):
         processButton = QPushButton("Process")
         hBoxLayout.addWidget(processButton)
         processButton.clicked.connect(self.confirmationBeforeProcessing)
-
-        self.webView = QWebEngineView()
-        custom_page = CustomWebEnginePage(self.webView)
-        self.webView.setPage(custom_page)
-        script_dir = Path(__file__).resolve().parent
-        html_file_path = script_dir / self.HTML_FILE
-        self.webView.setUrl(QUrl.fromLocalFile(str(html_file_path)))
-        mainVLayout.addWidget(self.webView)
 
         self.thread = None
 

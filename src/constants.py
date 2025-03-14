@@ -1260,7 +1260,6 @@ TOOLTIPS = {
         "approximately 3-4 characters = 1 token."
         "</body></html>"
     ),
-    "CHUNKS_ONLY": "Solely query the vector database and get relevant chunks. Very useful to test the chunk size/overlap settings.",
     "CONTEXTS": "Maximum number of chunks (aka contexts) to return.",
     "COPY_RESPONSE": "Copy the chunks (if chunks only is checked) or model's response to the clipboard.",
     "CREATE_DEVICE_DB": "Choose 'cpu' or 'cuda'. Use 'cuda' if available.",

@@ -1,44 +1,64 @@
-import os
-import logging
-import warnings
-import platform
-import pickle
-import shutil
+# gui_tabs_databases.py
+
+import time
+import gc
+import json
 from pathlib import Path
+import multiprocessing
 
 import yaml
-from PySide6.QtCore import QDir, Qt, QTimer, QThread, Signal, QRegularExpression
+from PySide6.QtCore import QDir, Qt, QThread, Signal, QRegularExpression
 from PySide6.QtGui import QAction, QRegularExpressionValidator
 from PySide6.QtWidgets import (QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox, QTreeView, QFileSystemModel,
                                QMenu, QGroupBox, QLineEdit, QGridLayout, QSizePolicy, QComboBox)
 
-import database_interactions
-from choose_documents_and_vector_model import select_embedding_model_directory, choose_documents_directory
-from utilities import check_preconditions_for_db_creation, open_file, delete_file, backup_database
-from constants import VECTOR_MODELS
+from database_interactions import create_vector_db_in_process
+from choose_documents_and_vector_model import choose_documents_directory
+from utilities import check_preconditions_for_db_creation, open_file, delete_file, backup_database_incremental, my_cprint
+from download_model import model_downloaded_signal
+from constants import TOOLTIPS
 
-datasets_logger = logging.getLogger('datasets')
-datasets_logger.setLevel(logging.WARNING)
+class CreateDatabaseProcess:
+    def __init__(self, database_name, parent=None):
+        self.database_name = database_name
+        self.process = None
 
-logging.getLogger("transformers").setLevel(logging.ERROR)
-warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
-logging.getLogger().setLevel(logging.WARNING)
+    def start(self):
+        self.process = multiprocessing.Process(target=create_vector_db_in_process, args=(self.database_name,))
+        self.process.start()
+
+    def wait(self):
+        if self.process:
+            self.process.join()
+
+    def is_alive(self):
+        if self.process:
+            return self.process.is_alive()
+        return False
 
 class CreateDatabaseThread(QThread):
     creationComplete = Signal()
     
-    def __init__(self, database_name, parent=None):
+    def __init__(self, database_name, model_name, parent=None):
         super().__init__(parent)
         self.database_name = database_name
+        self.model_name = model_name
+        self.process = None
 
     def run(self):
-        create_vector_db = database_interactions.CreateVectorDB(database_name=self.database_name)
-        create_vector_db.run() # initiates database creation
-        self.update_config_with_database_name()
-        backup_database()
-        
+        # create db in a separate process
+        self.process = multiprocessing.Process(target=create_vector_db_in_process, args=(self.database_name,))
+        self.process.start()
+        self.process.join()
+
+        my_cprint(f"{self.model_name} removed from memory.", "red")
         self.creationComplete.emit()
+
+        # after db creation, backup db and update config
+        time.sleep(.2)
+        self.update_config_with_database_name()
+
+        backup_database_incremental(self.database_name)
 
     def update_config_with_database_name(self):
         config_path = Path(__file__).resolve().parent / "config.yaml"
@@ -67,22 +87,10 @@ class CustomFileSystemModel(QFileSystemModel):
         super().__init__(parent)
         self.setFilter(QDir.Files)
 
-    def data(self, index, role=Qt.DisplayRole):
-        if role == Qt.DisplayRole and index.column() == 0:
-            file_path = super().filePath(index)
-            if file_path.endswith('.pkl'):
-                try:
-                    with open(file_path, 'rb') as file:
-                        document = pickle.load(file)
-                    return document.metadata.get('file_name', 'Unknown')
-                except Exception as e:
-                    print(f"Error unpickling file {file_path}: {e}")
-                    return "Error"
-        return super().data(index, role)
-
 class DatabasesTab(QWidget):
     def __init__(self):
         super().__init__()
+        model_downloaded_signal.downloaded.connect(self.update_model_combobox)
 
         self.layout = QVBoxLayout(self)
         self.documents_group_box = self.create_group_box("Files To Add to Database", "Docs_for_DB")
@@ -91,13 +99,17 @@ class DatabasesTab(QWidget):
         grid_layout_top_buttons = QGridLayout()
 
         self.choose_docs_button = QPushButton("Choose Files")
+        self.choose_docs_button.setToolTip(TOOLTIPS["CHOOSE_FILES"])
         self.choose_docs_button.clicked.connect(choose_documents_directory)
 
         self.model_combobox = QComboBox()
+        self.model_combobox.setToolTip(TOOLTIPS["SELECT_VECTOR_MODEL"])
         self.populate_model_combobox()
         self.model_combobox.currentIndexChanged.connect(self.on_model_selected)
+        self.model_combobox.activated.connect(self.refresh_model_combobox)
 
         self.create_db_button = QPushButton("Create Vector Database")
+        self.create_db_button.setToolTip(TOOLTIPS["CREATE_VECTOR_DB"])
         self.create_db_button.clicked.connect(self.on_create_db_clicked)
         self.create_db_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
@@ -111,6 +123,7 @@ class DatabasesTab(QWidget):
 
         hbox2 = QHBoxLayout()
         self.database_name_input = QLineEdit()
+        self.database_name_input.setToolTip(TOOLTIPS["DATABASE_NAME_INPUT"])
         self.database_name_input.setPlaceholderText("Enter database name")
         self.database_name_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         regex = QRegularExpression("^[a-z0-9_-]*$")
@@ -123,20 +136,45 @@ class DatabasesTab(QWidget):
 
         self.sync_combobox_with_config()
 
+    def refresh_model_combobox(self, index):
+        """Refreshes the combobox contents before showing the dropdown"""
+        current_text = self.model_combobox.currentText()
+        self.populate_model_combobox()
+        # Restore the previous selection if it still exists
+        idx = self.model_combobox.findText(current_text)
+        if idx >= 0:
+            self.model_combobox.setCurrentIndex(idx)
+
+    def update_model_combobox(self, model_name, model_type):
+        if model_type == "vector":
+            self.populate_model_combobox()
+            self.sync_combobox_with_config()
+
     def populate_model_combobox(self):
+        # 1. populates comobobox when script loads
         self.model_combobox.clear()
         self.model_combobox.addItem("Select a model", None)
 
-        for provider, models in VECTOR_MODELS.items():
-            for model in models:
-                repo_id = model['repo_id']
-                display_name = model['name']
-                self.model_combobox.addItem(display_name, repo_id)
+        script_dir = Path(__file__).resolve().parent
+        vector_dir = script_dir / "Models" / "vector"
+        
+        if not vector_dir.exists():
+            print(f"Warning: Vector directory not found at {vector_dir}")
+            return
 
-        if self.model_combobox.count() == 1:
-            print("Warning: No models found in VECTOR_MODELS dictionary")
+        model_found = False
+        for folder in vector_dir.iterdir():
+            if folder.is_dir():
+                model_found = True
+                display_name = folder.name
+                full_path = str(folder)
+                self.model_combobox.addItem(display_name, full_path)
+        
+        if not model_found:
+            print(f"Warning: No model directories found in {vector_dir}")
 
     def sync_combobox_with_config(self):
+        # 2. after the script loads, sets the model chosen to what is in the config
         config_path = Path(__file__).resolve().parent / "config.yaml"
         if config_path.exists():
             with open(config_path, 'r', encoding='utf-8') as file:
@@ -151,33 +189,53 @@ class DatabasesTab(QWidget):
                     print(f"Warning: Model {current_model} from config not found in combo box")
                     self.model_combobox.setCurrentIndex(0)
             else:
-                print("No model specified in config, defaulting to 'Select a model'")
                 self.model_combobox.setCurrentIndex(0)
         else:
-            print("Config file not found, defaulting to 'Select a model'")
             self.model_combobox.setCurrentIndex(0)
 
     def on_model_selected(self, index):
+        # 3. updates the config when a user selects a different model
         selected_path = self.model_combobox.itemData(index)
         config_path = Path(__file__).resolve().parent / "config.yaml"
         config_data = {}
+
         if config_path.exists():
             with open(config_path, 'r', encoding='utf-8') as file:
                 config_data = yaml.safe_load(file) or {}
-        
+
         if selected_path:
             config_data["EMBEDDING_MODEL_NAME"] = selected_path
+
+            # hardcode dimensions for stella)
+            if "stella" in selected_path.lower() or "static-retrieval" in selected_path.lower():
+                config_data["EMBEDDING_MODEL_DIMENSIONS"] = 1024
+            else:
+                config_json_path = Path(selected_path) / "config.json"
+                if config_json_path.exists():
+                    try:
+                        with open(config_json_path, 'r', encoding='utf-8') as json_file:
+                            model_config = json.load(json_file)
+
+                        # Extract "hidden_size" or "d_model"
+                        embedding_dimensions = model_config.get("hidden_size") or model_config.get("d_model")
+                        if embedding_dimensions and isinstance(embedding_dimensions, int):
+                            config_data["EMBEDDING_MODEL_DIMENSIONS"] = embedding_dimensions
+                        else:
+                            print(f"Warning: No valid embedding dimension found in {config_json_path}")
+                    except Exception as e:
+                        print(f"Error reading {config_json_path}: {e}")
+                else:
+                    print(f"Warning: config.json not found in {selected_path}")
         else:
-            if "EMBEDDING_MODEL_NAME" in config_data:
-                del config_data["EMBEDDING_MODEL_NAME"]
-        
+            config_data.pop("EMBEDDING_MODEL_NAME", None)
+            config_data.pop("EMBEDDING_MODEL_DIMENSIONS", None)
+
         with open(config_path, 'w', encoding='utf-8') as file:
             yaml.safe_dump(config_data, file, allow_unicode=True)
 
+
     def create_group_box(self, title, directory_name):
         group_box = QGroupBox(title)
-        group_box.setCheckable(True)
-        group_box.setChecked(True)
         layout = QVBoxLayout()
         tree_view = self.setup_directory_view(directory_name)
         layout.addWidget(tree_view)
@@ -212,20 +270,7 @@ class DatabasesTab(QWidget):
         tree_view = self.sender()
         model = tree_view.model()
         file_path = model.filePath(index)
-        
-        if file_path.endswith('.pkl'):
-            try:
-                with open(file_path, 'rb') as file:
-                    document = pickle.load(file)
-                internal_file_path = document.metadata.get('file_path')
-                if internal_file_path and Path(internal_file_path).exists():
-                    open_file(internal_file_path)
-                else:
-                    QMessageBox.warning(self, "File Not Found", f"The file {internal_file_path} does not exist.")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Could not open the pickle file: {e}")
-        else:
-            open_file(file_path)
+        open_file(file_path)
 
     def on_context_menu(self, point):
         tree_view = self.sender()
@@ -249,19 +294,17 @@ class DatabasesTab(QWidget):
             QMessageBox.warning(self, "No Model Selected", "Please select a model before creating a database.")
             return
 
-        # disable widgets
         self.create_db_button.setDisabled(True)
         self.choose_docs_button.setDisabled(True)
         self.model_combobox.setDisabled(True)
         self.database_name_input.setDisabled(True)
         
         database_name = self.database_name_input.text().strip()
+        model_name = self.model_combobox.currentText()
         script_dir = Path(__file__).resolve().parent
         
-        # check conditions
         checks_passed, message = check_preconditions_for_db_creation(script_dir, database_name)
         
-        # re-enable widgets if any condition fails
         if not checks_passed:
             self.create_db_button.setDisabled(False)
             self.choose_docs_button.setDisabled(False)
@@ -272,8 +315,7 @@ class DatabasesTab(QWidget):
 
         print(f"Database will be named: '{database_name}'")
         
-        # start create database thread
-        self.create_database_thread = CreateDatabaseThread(database_name=database_name, parent=self)
+        self.create_database_thread = CreateDatabaseThread(database_name=database_name, model_name=model_name, parent=self)
         self.create_database_thread.creationComplete.connect(self.reenable_create_db_button)
         self.create_database_thread.start()
 
@@ -282,12 +324,13 @@ class DatabasesTab(QWidget):
         self.choose_docs_button.setDisabled(False)
         self.model_combobox.setDisabled(False)
         self.database_name_input.setDisabled(False)
+        self.create_database_thread = None
+        gc.collect()
 
     def toggle_group_box(self, group_box, checked):
         self.groups[group_box] = 1 if checked else 0
         self.adjust_stretch()
 
     def adjust_stretch(self):
-        total_stretch = sum(stretch for group, stretch in self.groups.items() if group.isChecked())
         for group, stretch in self.groups.items():
             self.layout.setStretchFactor(group, stretch if group.isChecked() else 0)
