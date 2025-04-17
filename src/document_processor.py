@@ -29,7 +29,7 @@ from typing import Optional, Any, Iterator, Union
 from langchain_community.document_loaders.blob_loaders import Blob
 
 from langchain_community.document_loaders.parsers import PyMuPDFParser
-import pymupdf # throws error if imported before langchain stuff
+import pymupdf
 
 from constants import DOCUMENT_LOADERS
 from extract_metadata import extract_document_metadata, add_pymupdf_page_metadata
@@ -58,7 +58,6 @@ class CustomPyMuPDFParser(PyMuPDFParser):
                 full_content = []
                 for page in doc:
                     page_content = self._get_page_content(doc, page, text_kwargs)
-                    # Only add page marker and content if there's actual content
                     if page_content.strip():
                         full_content.append(f"[[page{page.number + 1}]]{page_content}")
 
@@ -206,17 +205,7 @@ def split_documents(documents=None, text_documents_pdf=None):
 
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
-        # text_splitter = RecursiveCharacterTextSplitter(
-            # chunk_size=chunk_size, 
-            # chunk_overlap=chunk_overlap,
-            # length_function=len
-        # )
-
         texts = []
-
-        # debug
-        # print(f"Documents list before splitting: {[doc.metadata.get('file_type') for doc in documents]}")
-        # print(f"PDF Documents list before splitting: {[doc.metadata.get('file_type') for doc in text_documents_pdf]}")
 
         # split non-PDF document objects
         if documents:
@@ -226,18 +215,6 @@ def split_documents(documents=None, text_documents_pdf=None):
                     documents[i].page_content = str(doc.page_content)
 
             texts = text_splitter.split_documents(documents)
-
-        """
-        I customized langchain's pymupdfparser to add custom page markers as follows:
-        
-        [[page1]]This is the text content of the first page.
-        It might contain multiple lines, paragraphs, or sections.
-
-        [[page2]]This is the text content of the second page.
-        Again, it could be as long as necessary, depending on the content.
-
-        [[page3]]Finally, this is the text content of the third page.
-        """
 
         if text_documents_pdf:
             processed_pdf_docs = []
@@ -252,51 +229,3 @@ def split_documents(documents=None, text_documents_pdf=None):
             logging.exception("Error during document splitting")
             logging.error(f"Error type: {type(e)}")
             raise
-
-"""
-The PyMUPDF parser was modified in langchain-community 0.3.15+
-
-- Adds "producer" and "creator" metadata fields
-- Adds thread safety features
-- Adds support for encrypted PDFs, tables, and enhanced image extraction
-- Added configurable page handling modes
-
-+----------------------+---------------------------+---------------+-----------+
-| Parameter            | Available Options         | Default Value | Required? |
-+----------------------+---------------------------+---------------+-----------+
-| mode                 | "single", "page"          | "page"        | No        |
-+----------------------+---------------------------+---------------+-----------+
-| password            | Any string                 | None          | No        |
-+----------------------+---------------------------+---------------+-----------+
-| pages_delimiter     | Any string                 | "\n\f"        | No        |
-+----------------------+---------------------------+---------------+-----------+
-| extract_images      | True, False                | False         | No        |
-+----------------------+---------------------------+---------------+-----------+
-| images_parser       | BaseImageBlobParser obj    | None          | No        |
-+----------------------+---------------------------+---------------+-----------+
-| images_inner_format | "text"                     | "text"        | No        |
-|                     | "markdown-img"             |               |           |
-|                     | "html-img"                 |               |           |
-+----------------------+---------------------------+---------------+-----------+
-| extract_tables      | "csv"                      | None          | No        |
-|                     | "markdown"                 |               |           |
-|                     | "html"                     |               |           |
-|                     | None                       |               |           |
-+----------------------+---------------------------+---------------+-----------+
-| extract_tables      | Dictionary with settings   | None          | No        |
-| _settings           | for table extraction       |               |           |
-+----------------------+---------------------------+---------------+-----------+
-| text_kwargs         | Dictionary with text       | None          | No        |
-| (Parser only)       | extraction settings        |               |           |
-+----------------------+---------------------------+---------------+-----------+
-
-This table is ONLY RELEVANT if I do not use custom sub-classes.  Keep for possible future reference
-
-Regarding the additional metadata fields, this won't interfere with extract_metadata.py because it:
-
-1) Applies after the document is loaded; and
-2) Uses document.metadata.update(metadata), which means that it will either:
-
-* Add your metadata fields alongside the Langchain metadata; or
-* Override any duplicate fields with your values
-"""

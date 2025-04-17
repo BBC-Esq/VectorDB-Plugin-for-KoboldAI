@@ -1,5 +1,3 @@
-# database_interactions.py
-
 import gc
 import logging
 import os
@@ -30,7 +28,6 @@ from utilities import my_cprint, get_model_native_precision, get_appropriate_dty
 from constants import VECTOR_MODELS
 
 logging.basicConfig(level=logging.CRITICAL, force=True)
-# logging.basicConfig(level=logging.DEBUG, force=True)
 logger = logging.getLogger(__name__)
 
 class BaseEmbeddingModel:
@@ -53,11 +50,10 @@ class BaseEmbeddingModel:
         prepared_encode_kwargs = self.prepare_encode_kwargs()
         return HuggingFaceEmbeddings(
             model_name=self.model_name,
-            show_progress=not self.is_query,  # only show progress for database creation
+            show_progress=not self.is_query,
             model_kwargs=prepared_kwargs,
             encode_kwargs=prepared_encode_kwargs
         )
-
 
 class SnowflakeEmbedding(BaseEmbeddingModel):
     def prepare_kwargs(self):
@@ -129,7 +125,6 @@ class Stella400MEmbedding(BaseEmbeddingModel):
         logging.debug(f"is_cuda: {is_cuda}")
         logging.debug(f"use_xformers: {use_xformers}")
 
-        # Add this tokenizer configuration to fix the error
         stella_kwargs["tokenizer_kwargs"] = {
             "max_length": 8192,
             "padding": True,
@@ -139,7 +134,7 @@ class Stella400MEmbedding(BaseEmbeddingModel):
         stella_kwargs["config_kwargs"] = {
             "use_memory_efficient_attention": use_xformers,
             "unpad_inputs": use_xformers,
-            "attn_implementation": "eager"  # sdpa is not implemented yet like it is for Stella and Snowflake
+            "attn_implementation": "eager"
         }
 
         logging.debug("\nFinal config settings:")
@@ -180,6 +175,32 @@ class AlibabaEmbedding(BaseEmbeddingModel):
         return ali_kwargs
 
 
+def process_chunks_only_query(database_name, query, result_queue):
+    try:
+        query_db = QueryVectorDB(database_name)
+        contexts, metadata_list = query_db.search(query)
+
+        formatted_contexts = []
+        for index, (context, metadata) in enumerate(zip(contexts, metadata_list), start=1):
+            file_name = metadata.get('file_name', 'Unknown')
+            cleaned_context = re.sub(r'\n[ \t]+\n', '\n\n', context)
+            cleaned_context = re.sub(r'\n\s*\n\s*\n*', '\n\n', cleaned_context.strip())
+            formatted_context = (
+                f"{'-'*80}\n"
+                f"CONTEXT {index} | {file_name}\n"
+                f"{'-'*80}\n"
+                f"{cleaned_context}\n"
+            )
+            formatted_contexts.append(formatted_context)
+
+        result_queue.put("\n".join(formatted_contexts))
+    except Exception as e:
+        result_queue.put(f"Error querying database: {str(e)}")
+    finally:
+        if 'query_db' in locals():
+            query_db.cleanup()
+
+
 def create_vector_db_in_process(database_name):
     create_vector_db = CreateVectorDB(database_name=database_name)
     create_vector_db.run()
@@ -215,22 +236,18 @@ class CreateVectorDB:
             encode_kwargs['batch_size'] = 2
         else:
             batch_size_mapping = {
-                't5-xxl': 2,
-                't5-xl': 2,
-                'stella_en_1.5B': 2,
-                'gte-large': 4,
-                't5-large': 4,
-                'bge-large': 4,
-                'e5-large': 4,
-                'arctic-embed-l': 4,
-                'stella_en_400M': 6,
-                't5-base': 6,
-                'e5-small': 16,
-                'bge-small': 16,
-                'Granite-30m-English': 16,
-                'static-retrieval': 400
+                'stella_en_1.5B': 4,
+                'e5-large': 7,
+                'arctic-embed-l': 7,
+                'e5-base': 6,
+                'e5-small': 10,
+                'gte-large': 12,
+                'Granite-30m-English': 12,
+                'bge-small': 12,
+                'gte-base': 14,
+                'arctic-embed-m': 14,
+                'stella_en_400M_v5': 20,
             }
-
             for key, value in batch_size_mapping.items():
                 if isinstance(key, tuple):
                     if any(model_name_part in embedding_model_name for model_name_part in key):
@@ -283,7 +300,6 @@ class CreateVectorDB:
             all_ids = []
             chunk_counters = defaultdict(int)
 
-            # Process all texts and generate IDs
             for doc in texts:
                 file_hash = doc.metadata.get('hash')
                 chunk_counters[file_hash] += 1
@@ -307,7 +323,6 @@ class CreateVectorDB:
                 index_type="FLAT",
                 dimensions=config_data.get("EMBEDDING_MODEL_DIMENSIONS"),
                 allow_dangerous_deserialization=True,
-                # vector_type=np.float32
             )
 
             my_cprint(f"Processed {len(all_texts)} chunks", "yellow")
@@ -406,40 +421,32 @@ class CreateVectorDB:
         config_data = self.load_config(self.ROOT_DIRECTORY)
         EMBEDDING_MODEL_NAME = config_data.get("EMBEDDING_MODEL_NAME")
 
-        # list to hold "document objects"        
         documents = []
 
-        # load text document objects
         text_documents = load_documents(self.SOURCE_DIRECTORY)
         if isinstance(text_documents, list) and text_documents:
             documents.extend(text_documents)
 
-        # separate lists for pdf and non-pdf document objects
         text_documents_pdf = [doc for doc in documents if doc.metadata.get("file_type") == ".pdf"]
         documents = [doc for doc in documents if doc.metadata.get("file_type") != ".pdf"]
 
-        # load image descriptions
         print("Loading any images...")
         image_documents = choose_image_loader()
         if isinstance(image_documents, list) and image_documents:
             if len(image_documents) > 0:
                 documents.extend(image_documents)
 
-        # load audio transcriptions
         print("Loading any audio transcripts...")
         audio_documents = self.load_audio_documents()
         if isinstance(audio_documents, list) and audio_documents:
             documents.extend(audio_documents)
 
-        # create a list to save pre-split text for sqliteDB
         json_docs_to_save = []
         json_docs_to_save.extend(documents)
         json_docs_to_save.extend(text_documents_pdf)
 
-        # blank list to hold all split document objects
         texts = []
 
-        # split document objects and add to list
         if (isinstance(documents, list) and documents) or (isinstance(text_documents_pdf, list) and text_documents_pdf):
             texts = split_documents(documents, text_documents_pdf)
             print(f"Documents split into {len(texts)} chunks.")
@@ -447,17 +454,14 @@ class CreateVectorDB:
         del documents, text_documents_pdf
         gc.collect()
 
-        # create db
         if isinstance(texts, list) and texts:
             embeddings, encode_kwargs = self.initialize_vector_model(EMBEDDING_MODEL_NAME, config_data)
 
-            # Get hash->ID mappings along with creating the vector database
             hash_id_mappings = self.create_database(texts, embeddings)
 
             del texts
             gc.collect()
 
-            # Pass mappings to metadata db creation
             self.create_metadata_db(json_docs_to_save, hash_id_mappings)
             del json_docs_to_save
             gc.collect()
@@ -603,200 +607,3 @@ class QueryVectorDB:
 
         gc.collect()
         logging.debug(f"Cleanup completed for instance {self._debug_id}")
-
-
-"""
-Snowflake, Alibaba, and Stella 400M embedding models can all use xformers's memory efficient attention; however, 400M is slightly different.
-
-Snowflake and Alibaba:
-
-1. Initial Setup
-   - Attempts to import xformers library
-   - Checks if use_memory_efficient_attention parameter was explicitly passed
-   - If not passed, uses the value from config
-   - Sets memory_efficient_attention to None if xformers isn't available
-
-2. Implementation Selection
-   - Uses config's attention implementation if none specified
-   - Forces 'eager' implementation when using memory efficient attention
-
-3. Input Processing
-   - Uses config's unpad_inputs if none specified
-
-4. Runtime Verification
-   - Confirms use_memory_efficient_attention is True
-   - Verifies memory_efficient_attention is available (not None)
-   - Only proceeds with xformers if all checks pass
-
-Stella 400M:
-
-Explicitly requires use_memory_efficient_attention to be True when using unpadded inputs, making xformers mandatory.
-This differs from the previous scripts we looked at, which would allow unpadded inputs with or without xformers.
-The model will raise an assertion error if you try to use unpadded inputs without xformers.
-Also, unlike Alibaba or Snowflake, "eager" must be used even when NOT using xformers due to SDPA not being implemented yet.
-"""
-
-        # my_cprint(f"{self.model_name} removed from memory.", "red")
-
-
-# class DeleteFromVectorDB:
-    # def __init__(self, selected_database):
-       # """
-       # Initialize with path to the selected vector database.
-       # """
-       # self.ROOT_DIRECTORY = Path(__file__).resolve().parent
-       # self.PERSIST_DIRECTORY = self.ROOT_DIRECTORY / "Vector_DB" / selected_database
-
-    # def get_tiledb_ids_for_hash(self, file_hash):
-       # """
-       # Retrieve all TileDB IDs associated with a given hash from SQLite database.
-       # """
-       # sqlite_db_path = self.PERSIST_DIRECTORY / "metadata.db"
-       # conn = sqlite3.connect(sqlite_db_path)
-       # cursor = conn.cursor()
-
-       # try:
-           # cursor.execute('''
-               # SELECT tiledb_id FROM hash_chunk_ids 
-               # WHERE hash = ?
-           # ''', (file_hash,))
-
-           # tiledb_ids = [row[0] for row in cursor.fetchall()]
-           # return tiledb_ids
-       # finally:
-           # conn.close()
-
-    # def delete_from_sqlite(self, file_hash, conn):
-       # """
-       # Delete all entries associated with the hash from both SQLite tables.
-       # """
-       # cursor = conn.cursor()
-
-       # # Delete from document_metadata table
-       # cursor.execute('''
-           # DELETE FROM document_metadata 
-           # WHERE hash = ?
-       # ''', (file_hash,))
-
-       # # Delete from hash_chunk_ids table
-       # cursor.execute('''
-           # DELETE FROM hash_chunk_ids 
-           # WHERE hash = ?
-       # ''', (file_hash,))
-
-    # def delete_from_tiledb(self, tiledb_ids):
-        # """
-        # Delete vectors from TileDB using their IDs.
-        # """
-        # try:
-            # db = TileDB.load(
-                # index_uri=str(self.PERSIST_DIRECTORY),
-                # embedding=None,  # We don't need embeddings for deletion
-                # allow_dangerous_deserialization=True
-            # )
-
-            # success = db.delete(ids=tiledb_ids)
-            # return success
-        # except Exception as e:
-            # logging.error(f"TileDB deletion error: {str(e)}")
-            # raise
-
-    # def delete_vectors(self, file_hashes: list[str]):
-        # """
-        # Main method to handle deletion from both TileDB and SQLite databases with transaction support.
-        # Ensures atomic operations - either all deletions succeed or none do.
-
-        # Args:
-            # file_hashes (list[str]): List of file hashes whose vectors should be deleted
-
-        # Returns:
-            # bool: True if deletion was successful, False otherwise
-
-        # Raises:
-            # Exception: If deletion process fails
-        # """
-        # sqlite_db_path = self.PERSIST_DIRECTORY / "metadata.db"
-        # conn = sqlite3.connect(sqlite_db_path)
-
-        # try:
-            # conn.execute("BEGIN TRANSACTION")
-
-            # # Get all TileDB IDs for all hashes
-            # all_tiledb_ids = []
-            # for file_hash in file_hashes:
-                # tiledb_ids = self.get_tiledb_ids_for_hash(file_hash)
-                # if not tiledb_ids:
-                    # logging.warning(f"No vectors found for hash {file_hash}")
-                    # continue
-                # all_tiledb_ids.extend(tiledb_ids)
-
-            # if not all_tiledb_ids:
-                # logging.warning("No vectors found for any of the provided hashes")
-                # conn.rollback()
-                # return False
-
-            # # Delete from TileDB first
-            # tiledb_success = self.delete_from_tiledb(all_tiledb_ids)
-
-            # if not tiledb_success:
-                # logging.error("TileDB deletion failed")
-                # conn.rollback()
-                # return False
-
-            # # If TileDB deletion succeeded, delete from SQLite for all hashes
-            # for file_hash in file_hashes:
-                # self.delete_from_sqlite(file_hash, conn)
-
-            # conn.commit()
-
-            # logging.info(f"Successfully deleted {len(all_tiledb_ids)} vectors across {len(file_hashes)} hashes")
-            # return True
-
-        # except Exception as e:
-            # logging.error(f"Error during deletion: {str(e)}")
-            # conn.rollback()
-            # raise
-        # finally:
-            # conn.close()
-
-    # def verify_deletion(self, file_hashes: list[str]):
-        # """
-        # Verify that all traces of the hashes have been removed from both databases.
-        # """
-        # all_clean = True
-        # remaining_tiledb_count = 0
-        # remaining_metadata_count = 0
-
-        # for file_hash in file_hashes:
-           # tiledb_ids = self.get_tiledb_ids_for_hash(file_hash)
-           # if tiledb_ids:
-               # remaining_tiledb_count += len(tiledb_ids)
-               # all_clean = False
-               
-        # if remaining_tiledb_count > 0:
-           # logging.warning(f"Found {remaining_tiledb_count} remaining TileDB IDs across all hashes")
-
-        # sqlite_db_path = self.PERSIST_DIRECTORY / "metadata.db"
-        # conn = sqlite3.connect(sqlite_db_path)
-        # cursor = conn.cursor()
-
-        # try:
-           # placeholders = ','.join('?' * len(file_hashes))
-           # cursor.execute(f'''
-               # SELECT COUNT(*) FROM document_metadata 
-               # WHERE hash IN ({placeholders})
-           # ''', file_hashes)
-
-           # remaining_metadata_count = cursor.fetchone()[0]
-           # if remaining_metadata_count > 0:
-               # logging.warning(f"Found {remaining_metadata_count} remaining metadata entries across all hashes")
-               # all_clean = False
-
-           # return all_clean
-        # finally:
-           # conn.close()
-
-    # def cleanup(self):
-        # if torch.cuda.is_available():
-           # torch.cuda.empty_cache()
-        # gc.collect()

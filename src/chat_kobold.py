@@ -37,33 +37,52 @@ class KoboldChat:
     def connect_to_kobold(self, augmented_query):
         payload = {
             "prompt": augmented_query,
-            "max_context_length": 8192,
-            "max_length": 1024,
+            "max_context_length": 4096,
+            "max_length": 512,
             "temperature": 0.1,
             "top_p": 0.9,
+            "rep_pen": 1.1,
+            # "opmode": 0,
+            # "stop_sequence": []
+            # "bypass_eos": True
+            # "use_default_badwordsids": True
         }
 
         try:
+            logging.debug(f"Sending request to Kobold API with prompt length: {len(augmented_query)} characters")
             response = requests.post(self.api_url, json=payload, stream=True)
+            logging.debug(f"Response status code: {response.status_code}")
             response.raise_for_status()
+
             client = sseclient.SSEClient(response)
+            full_response = ""
 
             for event in client.events():
                 if event.event == "message":
                     try:
                         data = json.loads(event.data)
                         if 'token' in data:
-                            yield data['token']
+                            token = data['token']
+                            logging.debug(f"Received token: '{token}', finish_reason: {data.get('finish_reason')}")
+                            # Directly emit the signal
+                            self.signals.response_signal.emit(token)
+                            full_response += token
+                        else:
+                            logging.warning(f"Event has no token: {data}")
                     except json.JSONDecodeError:
                         logging.error(f"Failed to parse JSON: {event.data}")
-                        raise ValueError(f"Failed to parse response: {event.data}")
+                else:
+                    logging.debug(f"Received non-message event: {event.event}")
+
+            return full_response
         except Exception as e:
             logging.error(f"Error in Kobold API request: {str(e)}")
+            self.signals.error_signal.emit(f"API error: {str(e)}")
             raise
 
     def handle_response_and_cleanup(self, full_response, metadata_list):
         citations = format_citations(metadata_list)
-        
+
         if self.query_vector_db:
             self.query_vector_db.cleanup()
             # print("Embedding model removed from memory.")
@@ -92,23 +111,26 @@ class KoboldChat:
             self.signals.finished_signal.emit()
             return
 
-        augmented_query = f"{rag_string}\n\n---\n\n" + "\n\n---\n\n".join(contexts) + f"\n\n-----\n\n{query}"
+        prepend_string = "Only base your answer on the provided context/contexts. If you cannot, please state so."
+        augmented_query = f"{prepend_string}\n\n---\n\n" + "\n\n---\n\n".join(contexts) + f"\n\n-----\n\n{query}"
+        print(augmented_query)
 
-        full_response = ""
-        response_generator = self.connect_to_kobold(augmented_query)
-        for response_chunk in response_generator:
-            self.signals.response_signal.emit(response_chunk)
-            full_response += response_chunk
+        # Instead of using a generator, get the full response directly
+        try:
+            full_response = self.connect_to_kobold(augmented_query)
+            
+            with open('chat_history.txt', 'w', encoding='utf-8') as f:
+                normalized_response = normalize_chat_text(full_response)
+                f.write(normalized_response)
 
-        with open('chat_history.txt', 'w', encoding='utf-8') as f:
-            normalized_response = normalize_chat_text(full_response)
-            f.write(normalized_response)
+            self.signals.response_signal.emit("\n")
 
-        self.signals.response_signal.emit("\n")
-
-        citations = self.handle_response_and_cleanup(full_response, metadata_list)
-        self.signals.citation_signal.emit(citations)
-        self.signals.finished_signal.emit()
+            citations = self.handle_response_and_cleanup(full_response, metadata_list)
+            self.signals.citation_signal.emit(citations)
+        except Exception as e:
+            self.signals.error_signal.emit(f"Error: {str(e)}")
+        finally:
+            self.signals.finished_signal.emit()
 
 class KoboldThread(QThread):
     def __init__(self, query, selected_database):
