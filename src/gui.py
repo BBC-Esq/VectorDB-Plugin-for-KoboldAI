@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 )
 from core.initialize import main as initialize_system
 from gui.tabs import create_tabs
-from core.utilities import list_theme_files, make_theme_changer, load_stylesheet
+from core.utilities import list_theme_files, make_theme_changer, load_stylesheet, ensure_theme_config
 
 try:
     with open('test_write.txt', 'w') as f:
@@ -94,7 +94,8 @@ def main():
     try:
         logging.info("Starting application")
         app = QApplication(sys.argv)
-        app.setStyleSheet(load_stylesheet('custom_stylesheet_steel_ocean.css'))
+        theme = ensure_theme_config()
+        app.setStyleSheet(load_stylesheet(theme))
         ex = DocQA_GUI()
         ex.show()
         logging.info("Application main window shown")

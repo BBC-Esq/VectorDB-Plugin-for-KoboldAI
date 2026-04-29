@@ -561,18 +561,21 @@ def load_config(config_file):
         return yaml.safe_load(file)
 
 def list_theme_files():
-    script_dir = Path(__file__).parent
-    theme_dir = script_dir / 'CSS'
-    return [f.name for f in theme_dir.iterdir() if f.suffix == '.css']
+    from core.constants import THEMES
+    return sorted(THEMES.keys())
 
-def load_stylesheet(filename):
-    script_dir = Path(__file__).parent
-    stylesheet_path = script_dir / 'CSS' / filename
-    with stylesheet_path.open('r') as file:
-        stylesheet = file.read()
-    return stylesheet
+def load_stylesheet(name):
+    from string import Template
+    from core.constants import PROJECT_ROOT, THEMES
+    if name not in THEMES:
+        name = 'default'
+    template_path = PROJECT_ROOT / 'CSS' / 'template.css'
+    with template_path.open('r') as f:
+        template = Template(f.read())
+    return template.substitute(THEMES[name])
 
 def ensure_theme_config():
+    from core.constants import THEMES
     try:
         with open('config.yaml', 'r') as f:
             config = yaml.safe_load(f)
@@ -583,15 +586,16 @@ def ensure_theme_config():
         if 'appearance' not in config:
             config['appearance'] = {}
 
-        if 'theme' not in config['appearance'] or not config['appearance']['theme']:
-            config['appearance']['theme'] = 'custom_stylesheet_default.css'
+        theme = config['appearance'].get('theme')
+        if not theme or theme not in THEMES:
+            config['appearance']['theme'] = 'default'
 
         with open('config.yaml', 'w') as f:
             yaml.safe_dump(config, f)
 
         return config['appearance']['theme']
     except Exception:
-        return 'custom_stylesheet_default.css'
+        return 'default'
 
 def update_theme_in_config(new_theme):
     try:
