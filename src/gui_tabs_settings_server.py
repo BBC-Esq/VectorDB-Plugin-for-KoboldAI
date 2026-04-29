@@ -14,7 +14,9 @@ class ServerSettingsTab(QWidget):
         # First row
         self.grid_layout.addWidget(QLabel("GPU Type:"), 0, 0)
         self.gpu_type_combo = QComboBox()
-        self.gpu_type_combo.addItems(['usecublas', 'usevulkan', 'useclblast'])
+        # `usecublas` was renamed to `usecuda` in koboldcpp v1.96.2; CLBlast was
+        # fully removed in v1.107.3 -- replaced here with `usecpu` for CPU-only.
+        self.gpu_type_combo.addItems(['usecuda', 'usevulkan', 'usecpu'])
         self.grid_layout.addWidget(self.gpu_type_combo, 0, 1)
         
         self.grid_layout.addWidget(QLabel("VRAM:"), 0, 2)
@@ -24,19 +26,22 @@ class ServerSettingsTab(QWidget):
         
         self.grid_layout.addWidget(QLabel("Quant KV:"), 0, 4)
         self.quant_kv_combo = QComboBox()
-        self.quant_kv_combo.addItems(['none', '0=f16', '1=q8', '2=q4'])
+        # koboldcpp v1.112.2 changed --quantkv to accept named cache types;
+        # the old single-digit values (0/1/2) are deprecated.
+        self.quant_kv_combo.addItems(['none', 'f16', 'bf16', 'q8_0', 'q5_1', 'q4_0'])
         self.grid_layout.addWidget(self.quant_kv_combo, 0, 5)
         
         self.mmq_checkbox = QCheckBox("MMQ")
         self.grid_layout.addWidget(self.mmq_checkbox, 0, 6)
         
         # Second row
-        self.grid_layout.addWidget(QLabel("Blas Batch Size:"), 1, 0)
+        # `--blasbatchsize` was renamed to `--batchsize` in koboldcpp v1.101.1.
+        self.grid_layout.addWidget(QLabel("Batch Size:"), 1, 0)
         self.blas_batch_size_combo = QComboBox()
         self.blas_batch_size_combo.addItems(['Not Specified', '-1', '32', '64', '128', '256', '512', '1024', '2048'])
         self.grid_layout.addWidget(self.blas_batch_size_combo, 1, 1)
-        
-        self.grid_layout.addWidget(QLabel("Blas Threads:"), 1, 2)
+
+        self.grid_layout.addWidget(QLabel("Batch Threads:"), 1, 2)
         self.blas_threads_combo = QComboBox()
         self.blas_threads_combo.addItems([str(i) for i in range(1, 25)])
         self.blas_threads_combo.setCurrentIndex(7)
