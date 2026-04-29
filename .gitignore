@@ -1,0 +1,30 @@
+# --- Personal / local-only docs ---
+Kobold_API.md
+kobold_current_wiki.md
+koboldcpp as of 20250412.txt
+
+# --- Python venv (when created inside src/) ---
+src/.lock
+src/pyvenv.cfg
+src/Include/
+src/Lib/
+src/Scripts/
+src/share/
+
+# --- Bytecode / cache ---
+__pycache__/
+*.pyc
+*.pyo
+
+# --- Runtime data populated by the app ---
+src/Vector_DB/
+src/Vector_DB_Backup/
+src/Models/
+src/Docs_for_DB/
+src/Scraped_Documentation/
+src/Assets/
+src/document_processor.log
+src/metadata.txt
+
+# --- Large bundled binary (>100MB, not suitable for git) ---
+src/koboldcpp_cu12.exe

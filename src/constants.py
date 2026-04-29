@@ -545,16 +545,6 @@ VISION_MODELS = {
         'vram': '10.5 GB',
         'loader': 'loader_molmo'
     },
-    'Llava 1.6 Vicuna - 13b': {
-        'precision': 'float16',
-        'quant': '4-bit',
-        'size': '13b',
-        'repo_id': 'llava-hf/llava-v1.6-vicuna-13b-hf',
-        'cache_dir': 'llava-hf--llava-v1.6-vicuna-13b-hf',
-        'requires_cuda': True,
-        'vram': '14.1 GB',
-        'loader': 'loader_llava_next'
-    }
 }
 
 WHISPER_MODELS = {
