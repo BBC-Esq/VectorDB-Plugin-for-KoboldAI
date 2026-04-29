@@ -4,7 +4,7 @@ import yaml
 from PySide6.QtCore import Signal, QObject, QThread
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QTextEdit, QPushButton, QHBoxLayout, QMessageBox, QApplication, QComboBox, QCheckBox
 import multiprocessing
-from database_interactions import process_chunks_only_query
+from db.database_interactions import process_chunks_only_query
 from core.utilities import check_preconditions_for_submit_question
 from chat_kobold import KoboldChat, KoboldThread
 

@@ -5,12 +5,6 @@ import time
 import tkinter as tk
 from tkinter import messagebox
 
-from replace_sourcecode import (
-    replace_pdf_file,
-    replace_instructor_file,
-    replace_sentence_transformer_file,
-)
-
 
 _triton_cache = os.path.join(
     os.environ.get("USERPROFILE", os.path.expanduser("~")),
@@ -206,7 +200,6 @@ libs = [
     "humanfriendly==10.0",
     "idna==3.11",
     "importlib_metadata==8.7.0",
-    "InstructorEmbedding==1.0.1",
     "Jinja2==3.1.6",
     "joblib==1.5.2",
     "jsonpatch==1.33",
@@ -419,11 +412,6 @@ elif not all_failed:
 
 if all_failed:
     sys.exit(1)
-
-
-replace_pdf_file()
-replace_instructor_file()
-replace_sentence_transformer_file()
 
 
 end_time = time.time()

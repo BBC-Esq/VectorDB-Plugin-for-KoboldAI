@@ -8,7 +8,7 @@ import requests
 import sseclient
 from PySide6.QtCore import QThread, Signal, QObject
 
-from database_interactions import QueryVectorDB
+from db.database_interactions import QueryVectorDB
 from core.utilities import format_citations, normalize_chat_text
 from core.constants import rag_string
 
