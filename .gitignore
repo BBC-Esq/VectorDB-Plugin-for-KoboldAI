@@ -1,7 +1,5 @@
-# --- Personal / local-only docs ---
-Kobold_API.md
-kobold_current_wiki.md
-koboldcpp as of 20250412.txt
+# --- Local-only working folder (release notes, kobold reference clone, etc.) ---
+DEVELOPMENT/
 
 # --- Python venv (when created inside src/) ---
 src/.lock
