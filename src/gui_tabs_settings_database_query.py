@@ -27,7 +27,6 @@ class DatabaseSettingsTab(QWidget):
         grid_layout.addWidget(self.query_device_label, 0, 0)
         grid_layout.addWidget(self.query_device_combo, 0, 1)
 
-        # Add similarity settings (moved to the right of CPU widgets)
         similarity_value = self.database_config.get('similarity', '')
         self.similarity_edit = QLineEdit()
         self.similarity_edit.setPlaceholderText("Enter new similarity...")
@@ -40,7 +39,6 @@ class DatabaseSettingsTab(QWidget):
         self.field_data['similarity'] = self.similarity_edit
         self.label_data['similarity'] = self.similarity_label
 
-        # Add contexts settings (moved to the right of similarity widgets)
         contexts_value = self.database_config.get('contexts', '')
         self.contexts_edit = QLineEdit()
         self.contexts_edit.setPlaceholderText("Enter new contexts...")

@@ -25,19 +25,6 @@ class KoboldSignals(QObject):
 
 
 class ThinkingTagFilter:
-    """Strip <think>...</think> blocks from a token stream incrementally.
-
-    Modern reasoning models (DeepSeek R1, Qwen3, GLM-4.5, GPT-OSS, etc.) emit
-    chain-of-thought wrapped in `<think>` tags through the native Kobold
-    `/api/extra/generate/stream` endpoint. We don't want to display that
-    reasoning to the end user. The OpenAI-compatible chat completions endpoint
-    splits this out into a separate `reasoning_content` field as of
-    KoboldCpp 1.111.2, but the native streaming endpoint we use here keeps it
-    inline -- so we filter it client-side.
-
-    Tags can straddle token boundaries, so the filter holds back any trailing
-    bytes that could be the start of a tag until enough text arrives to decide.
-    """
 
     OPEN = "<think>"
     CLOSE = "</think>"
@@ -97,10 +84,6 @@ class KoboldChat:
             "temperature": 0.1,
             "top_p": 0.9,
             "rep_pen": 1.1,
-            # "opmode": 0,
-            # "stop_sequence": []
-            # "bypass_eos": True
-            # "use_default_badwordsids": True
         }
 
         try:
@@ -147,7 +130,6 @@ class KoboldChat:
 
         if self.query_vector_db:
             self.query_vector_db.cleanup()
-            # print("Embedding model removed from memory.")
 
         if torch.cuda.empty_cache():
             torch.cuda.empty_cache()
@@ -177,10 +159,9 @@ class KoboldChat:
         augmented_query = f"{prepend_string}\n\n---\n\n" + "\n\n---\n\n".join(contexts) + f"\n\n-----\n\n{query}"
         print(augmented_query)
 
-        # Instead of using a generator, get the full response directly
         try:
             full_response = self.connect_to_kobold(augmented_query)
-            
+
             with open('chat_history.txt', 'w', encoding='utf-8') as f:
                 normalized_response = normalize_chat_text(full_response)
                 f.write(normalized_response)

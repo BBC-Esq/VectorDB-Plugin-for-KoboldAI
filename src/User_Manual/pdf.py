@@ -1,4 +1,3 @@
-"""Module contains common parsers for PDFs."""
 from __future__ import annotations
 
 import warnings
@@ -50,17 +49,6 @@ _PDF_FILTER_WITHOUT_LOSS = [
 def extract_from_images_with_rapidocr(
     images: Sequence[Union[Iterable[np.ndarray], bytes]],
 ) -> str:
-    """Extract text from images with RapidOCR.
-
-    Args:
-        images: Images to extract text from.
-
-    Returns:
-        Text extracted from images.
-
-    Raises:
-        ImportError: If `rapidocr-onnxruntime` package is not installed.
-    """
     try:
         from rapidocr_onnxruntime import RapidOCR
     except ImportError:
@@ -79,7 +67,6 @@ def extract_from_images_with_rapidocr(
 
 
 class PyPDFParser(BaseBlobParser):
-    """Load `PDF` using `pypdf`"""
 
     def __init__(
         self, password: Optional[Union[str, bytes]] = None, extract_images: bool = False
@@ -88,7 +75,6 @@ class PyPDFParser(BaseBlobParser):
         self.extract_images = extract_images
 
     def lazy_parse(self, blob: Blob) -> Iterator[Document]:
-        """Lazily parse the blob."""
         import pypdf
 
         with blob.as_bytes_io() as pdf_file_obj:
@@ -103,11 +89,10 @@ class PyPDFParser(BaseBlobParser):
             ]
 
     def _extract_images_from_page(self, page: pypdf._page.PageObject) -> str:
-        """Extract images from page and get the text with RapidOCR."""
         if not self.extract_images or "/XObject" not in page["/Resources"].keys():
             return ""
 
-        xObject = page["/Resources"]["/XObject"].get_object()  # type: ignore
+        xObject = page["/Resources"]["/XObject"].get_object()
         images = []
         for obj in xObject:
             if xObject[obj]["/Subtype"] == "/Image":
@@ -127,21 +112,12 @@ class PyPDFParser(BaseBlobParser):
 
 
 class PDFMinerParser(BaseBlobParser):
-    """Parse `PDF` using `PDFMiner`."""
 
     def __init__(self, extract_images: bool = False, *, concatenate_pages: bool = True):
-        """Initialize a parser based on PDFMiner.
-
-        Args:
-            extract_images: Whether to extract images from PDF.
-            concatenate_pages: If True, concatenate all PDF pages into one a single
-                               document. Otherwise, return one document per page.
-        """
         self.extract_images = extract_images
         self.concatenate_pages = concatenate_pages
 
     def lazy_parse(self, blob: Blob) -> Iterator[Document]:
-        """Lazily parse the blob."""
 
         if not self.extract_images:
             from pdfminer.high_level import extract_text
@@ -187,7 +163,6 @@ class PDFMinerParser(BaseBlobParser):
                     yield Document(page_content=content, metadata=metadata)
 
     def _extract_images_from_page(self, page: pdfminer.layout.LTPage) -> str:
-        """Extract images from page and get the text with RapidOCR."""
         import pdfminer
 
         def get_image(layout_object: Any) -> Any:
@@ -216,30 +191,23 @@ class PDFMinerParser(BaseBlobParser):
 
 
 class PyMuPDFParser(BaseBlobParser):
-    """Parse `PDF` using `PyMuPDF`."""
 
     def __init__(
         self,
         text_kwargs: Optional[Mapping[str, Any]] = None,
         extract_images: bool = False,
     ) -> None:
-        """Initialize the parser.
-
-        Args:
-            text_kwargs: Keyword arguments to pass to ``fitz.Page.get_text()``.
-        """
         self.text_kwargs = text_kwargs or {}
         self.extract_images = extract_images
 
     def lazy_parse(self, blob: Blob) -> Iterator[Document]:
-        """Lazily parse the blob."""
         import fitz
 
         with blob.as_bytes_io() as file_path:
-            doc = fitz.open(file_path)  # open document
+            doc = fitz.open(file_path)
             text = ""
             for page in doc:
-                text += page.get_text(**self.text_kwargs) + "\n"  # Concatenate text from all pages
+                text += page.get_text(**self.text_kwargs) + "\n"
 
             metadata = {
                 "source": blob.source,
@@ -252,7 +220,6 @@ class PyMuPDFParser(BaseBlobParser):
     def _extract_images_from_page(
         self, doc: fitz.fitz.Document, page: fitz.fitz.Page
     ) -> str:
-        """Extract images from page and get the text with RapidOCR."""
         if not self.extract_images:
             return ""
         import fitz
@@ -270,12 +237,10 @@ class PyMuPDFParser(BaseBlobParser):
         return extract_from_images_with_rapidocr(imgs)
 
 class PyPDFium2Parser(BaseBlobParser):
-    """Parse `PDF` with `PyPDFium2`."""
 
     def __init__(self, extract_images: bool = False) -> None:
-        """Initialize the parser."""
         try:
-            import pypdfium2  # noqa:F401
+            import pypdfium2
         except ImportError:
             raise ImportError(
                 "pypdfium2 package not found, please install it with"
@@ -284,11 +249,8 @@ class PyPDFium2Parser(BaseBlobParser):
         self.extract_images = extract_images
 
     def lazy_parse(self, blob: Blob) -> Iterator[Document]:
-        """Lazily parse the blob."""
         import pypdfium2
 
-        # pypdfium2 is really finicky with respect to closing things,
-        # if done incorrectly creates seg faults.
         with blob.as_bytes_io() as file_path:
             pdf_reader = pypdfium2.PdfDocument(file_path, autoclose=True)
             try:
@@ -304,7 +266,6 @@ class PyPDFium2Parser(BaseBlobParser):
                 pdf_reader.close()
 
     def _extract_images_from_page(self, page: pypdfium2._helpers.page.PdfPage) -> str:
-        """Extract images from page and get the text with RapidOCR."""
         if not self.extract_images:
             return ""
 
@@ -317,7 +278,6 @@ class PyPDFium2Parser(BaseBlobParser):
 
 
 class PDFPlumberParser(BaseBlobParser):
-    """Parse `PDF` with `PDFPlumber`."""
 
     def __init__(
         self,
@@ -325,22 +285,15 @@ class PDFPlumberParser(BaseBlobParser):
         dedupe: bool = False,
         extract_images: bool = False,
     ) -> None:
-        """Initialize the parser.
-
-        Args:
-            text_kwargs: Keyword arguments to pass to ``pdfplumber.Page.extract_text()``
-            dedupe: Avoiding the error of duplicate characters if `dedupe=True`.
-        """
         self.text_kwargs = text_kwargs or {}
         self.dedupe = dedupe
         self.extract_images = extract_images
 
     def lazy_parse(self, blob: Blob) -> Iterator[Document]:
-        """Lazily parse the blob."""
         import pdfplumber
 
         with blob.as_bytes_io() as file_path:
-            doc = pdfplumber.open(file_path)  # open document
+            doc = pdfplumber.open(file_path)
 
             yield from [
                 Document(
@@ -365,13 +318,11 @@ class PDFPlumberParser(BaseBlobParser):
             ]
 
     def _process_page_content(self, page: pdfplumber.page.Page) -> str:
-        """Process the page content based on dedupe."""
         if self.dedupe:
             return page.dedupe_chars().extract_text(**self.text_kwargs)
         return page.extract_text(**self.text_kwargs)
 
     def _extract_images_from_page(self, page: pdfplumber.page.Page) -> str:
-        """Extract images from page and get the text with RapidOCR."""
         if not self.extract_images:
             return ""
 
@@ -392,50 +343,6 @@ class PDFPlumberParser(BaseBlobParser):
 
 
 class AmazonTextractPDFParser(BaseBlobParser):
-    """Send `PDF` files to `Amazon Textract` and parse them.
-
-    For parsing multi-page PDFs, they have to reside on S3.
-
-    The AmazonTextractPDFLoader calls the
-    [Amazon Textract Service](https://aws.amazon.com/textract/)
-    to convert PDFs into a Document structure.
-    Single and multi-page documents are supported with up to 3000 pages
-    and 512 MB of size.
-
-    For the call to be successful an AWS account is required,
-    similar to the
-    [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-configure.html)
-    requirements.
-
-    Besides the AWS configuration, it is very similar to the other PDF
-    loaders, while also supporting JPEG, PNG and TIFF and non-native
-    PDF formats.
-
-    ```python
-    from langchain_community.document_loaders import AmazonTextractPDFLoader
-    loader=AmazonTextractPDFLoader("example_data/alejandro_rosalez_sample-small.jpeg")
-    documents = loader.load()
-    ```
-
-    One feature is the linearization of the output.
-    When using the features LAYOUT, FORMS or TABLES together with Textract
-
-    ```python
-    from langchain_community.document_loaders import AmazonTextractPDFLoader
-    # you can mix and match each of the features
-    loader=AmazonTextractPDFLoader(
-        "example_data/alejandro_rosalez_sample-small.jpeg",
-        textract_features=["TABLES", "LAYOUT"])
-    documents = loader.load()
-    ```
-
-    it will generate output that formats the text in reading order and
-    try to output the information in a tabular structure or
-    output the key/value pairs with a colon (key: value).
-    This helps most LLMs to achieve better accuracy when
-    processing these texts.
-
-    """
 
     def __init__(
         self,
@@ -444,17 +351,6 @@ class AmazonTextractPDFParser(BaseBlobParser):
         *,
         linearization_config: Optional["TextLinearizationConfig"] = None,
     ) -> None:
-        """Initializes the parser.
-
-        Args:
-            textract_features: Features to be used for extraction, each feature
-                               should be passed as an int that conforms to the enum
-                               `Textract_Features`, see `amazon-textract-caller` pkg
-            client: boto3 textract client
-            linearization_config: Config to be used for linearization of the output
-                                  should be an instance of TextLinearizationConfig from
-                                  the `textractor` pkg
-        """
 
         try:
             import textractcaller as tc
@@ -501,14 +397,8 @@ class AmazonTextractPDFParser(BaseBlobParser):
             self.boto3_textract_client = client
 
     def lazy_parse(self, blob: Blob) -> Iterator[Document]:
-        """Iterates over the Blob pages and returns an Iterator with a Document
-        for each page, like the other parsers If multi-page document, blob.path
-        has to be set to the S3 URI and for single page docs
-        the blob.data is taken
-        """
 
         url_parse_result = urlparse(str(blob.path)) if blob.path else None
-        # Either call with S3 path (multi-page) or with bytes (single-page)
         if (
             url_parse_result
             and url_parse_result.scheme == "s3"
@@ -537,8 +427,6 @@ class AmazonTextractPDFParser(BaseBlobParser):
 
 
 class DocumentIntelligenceParser(BaseBlobParser):
-    """Loads a PDF with Azure Document Intelligence
-    (formerly Form Recognizer) and chunks at character level."""
 
     def __init__(self, client: Any, model: str):
         warnings.warn(
@@ -566,7 +454,6 @@ class DocumentIntelligenceParser(BaseBlobParser):
             yield d
 
     def lazy_parse(self, blob: Blob) -> Iterator[Document]:
-        """Lazily parse the blob."""
 
         with blob.as_bytes_io() as file_obj:
             poller = self.client.begin_analyze_document(self.model, file_obj)

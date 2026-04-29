@@ -1,12 +1,3 @@
-"""Windows installer for VectorDB-Plugin-for-KoboldAI.
-
-Modelled on the installer in BBC-Esq/VectorDB-Plugin: uses `uv` for package
-installation, supports Python 3.11/3.12/3.13, and pins to torch 2.9 + CUDA 12.8.
-The dependency list is scoped to what this project actually imports -- it does
-not pull in TTS, image generation, OCR, charting, or telemetry stacks that the
-sister project carries.
-"""
-
 import os
 import subprocess
 import sys
@@ -21,9 +12,6 @@ from replace_sourcecode import (
 )
 
 
-# --- Triton cache cleanup ------------------------------------------------
-# A leftover Triton cache from a previous (failed) install can cause obscure
-# import errors at first run. Clear it before installing anything.
 _triton_cache = os.path.join(
     os.environ.get("USERPROFILE", os.path.expanduser("~")),
     ".triton",
@@ -38,7 +26,6 @@ else:
 start_time = time.time()
 
 
-# --- Pre-flight checks ---------------------------------------------------
 def has_nvidia_gpu():
     try:
         result = subprocess.run(
@@ -118,9 +105,6 @@ if not manual_installation_confirmation():
     sys.exit(1)
 
 
-# --- Library lists -------------------------------------------------------
-# Priority libs are installed first so that torch/CUDA wheels resolve before
-# anything else asks for them. Each Python version has its own wheel URLs.
 priority_libs = {
     "cp311": {
         "GPU": [
@@ -175,7 +159,6 @@ priority_libs = {
     },
 }
 
-# Main dependency list. Installed with `--no-deps` so version pins stick.
 libs = [
     "accelerate==1.11.0",
     "aiohttp==3.13.2",
@@ -322,8 +305,6 @@ libs = [
     "zipp==3.23.0",
 ]
 
-# Installed WITH dependencies, because their dep trees are too noisy to pin
-# manually and they fix up missing transitives for the rest.
 full_install_libs = [
     "PySide6==6.10.0",
     "pymupdf==1.26.5",
@@ -331,7 +312,6 @@ full_install_libs = [
 ]
 
 
-# --- Install helpers -----------------------------------------------------
 def upgrade_pip_setuptools_wheel(max_retries=5, delay=3):
     upgrade_commands = [
         [sys.executable, "-m", "pip", "install", "--upgrade", "pip", "--no-cache-dir"],
@@ -393,7 +373,6 @@ def install_libraries(libraries, with_deps=False):
     return failed, multiple
 
 
-# --- Main flow -----------------------------------------------------------
 print("Upgrading pip, setuptools, and wheel:")
 upgrade_pip_setuptools_wheel()
 
@@ -442,16 +421,11 @@ if all_failed:
     sys.exit(1)
 
 
-# --- Source-code patches -------------------------------------------------
-# These overlay the project's customised versions of three upstream files
-# (langchain's pdf parser, InstructorEmbedding, and SentenceTransformer) into
-# the just-installed packages.
 replace_pdf_file()
 replace_instructor_file()
 replace_sentence_transformer_file()
 
 
-# --- Wrap up -------------------------------------------------------------
 end_time = time.time()
 total_time = end_time - start_time
 hours, rem = divmod(total_time, 3600)

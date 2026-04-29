@@ -7,7 +7,7 @@ from gui_tabs_settings_vision import VisionSettingsTab
 def update_all_configs(configs):
     updated = False
     for title, config in configs.items():
-        if title != "Kobold AI":  # Skip Kobold AI tab
+        if title != "Kobold AI":
             updated = config.update_config() or updated
     if updated:
         print("config.yaml file updated")
@@ -48,7 +48,6 @@ class GuiSettingsTab(QWidget):
                 adjust_stretch(self.groups, self.layout)
             ))
 
-        # VisionSettingsTab - handled separately
         visionSettings = VisionSettingsTab()
         visionGroup = QGroupBox("Vision Models")
         visionLayout = QVBoxLayout()

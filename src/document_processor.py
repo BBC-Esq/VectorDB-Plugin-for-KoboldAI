@@ -98,7 +98,7 @@ def load_single_document(file_path: Path) -> Document:
     elif file_extension == ".pdf":
         loader_options.update({
             "extract_images": False,
-            "text_kwargs": {},  # Optional: passed to https://pymupdf.readthedocs.io/en/latest/page.html#Page.get_text
+            "text_kwargs": {},
         })
 
     elif file_extension in [".eml", ".msg"]:
@@ -113,15 +113,9 @@ def load_single_document(file_path: Path) -> Document:
         loader_options.update({
             "open_encoding": "utf-8",
             "bs_kwargs": {
-                "features": "lxml",  # Specify the parser to use (lxml is generally fast and lenient)
-                # "parse_only": SoupStrainer("body"),  # Optionally parse only the body tag
-                # "from_encoding": "iso-8859-1",  # Specify a different input encoding if needed
+                "features": "lxml",
             },
-            "get_text_separator": "\n",  # Use newline as separator when extracting text
-            # Additional parameters and comments:
-            # "file_path": "path/to/file.html",  # Usually set automatically by the loader
-            # "open_encoding": None,  # Set to None to let BeautifulSoup detect encoding
-            # "get_text_separator": " ",  # Use space instead of newline if preferred
+            "get_text_separator": "\n",
         })
     elif file_extension in [".xlsx", ".xls", ".xlsm"]:
         loader_options.update({
@@ -207,7 +201,6 @@ def split_documents(documents=None, text_documents_pdf=None):
 
         texts = []
 
-        # split non-PDF document objects
         if documents:
             for i, doc in enumerate(documents):
                 if not isinstance(doc.page_content, str):

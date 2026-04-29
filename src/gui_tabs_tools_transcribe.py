@@ -26,8 +26,7 @@ class TranscriberToolSettingsTab(QWidget):
         model_selection_hbox = QHBoxLayout()
         model_selection_hbox.addWidget(QLabel("Model"))
         self.model_combo = QComboBox()
-        
-        # Use the WHISPER_MODELS dictionary to populate the combo box
+
         self.model_combo.addItems(WHISPER_MODELS.keys())
         
         model_selection_hbox.addWidget(self.model_combo)

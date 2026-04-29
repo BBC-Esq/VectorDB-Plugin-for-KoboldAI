@@ -1,5 +1,4 @@
 import multiprocessing
-# Set the start method at the very beginning
 if __name__ == '__main__':
     multiprocessing.set_start_method('spawn', force=True)
 
@@ -16,10 +15,6 @@ from initialize import main as initialize_system
 from gui_tabs import create_tabs
 from utilities import list_theme_files, make_theme_changer, load_stylesheet
 
-# Print the current working directory
-# print(f"Current working directory: {os.getcwd()}")
-
-# Check if we can write to the current directory
 try:
     with open('test_write.txt', 'w') as f:
         f.write("Testing write permissions")
@@ -98,7 +93,6 @@ class DocQA_GUI(QWidget):
 def main():
     try:
         logging.info("Starting application")
-        # multiprocessing.set_start_method('spawn')
         app = QApplication(sys.argv)
         app.setStyleSheet(load_stylesheet('custom_stylesheet_steel_ocean.css'))
         ex = DocQA_GUI()

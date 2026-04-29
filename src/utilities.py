@@ -53,7 +53,6 @@ def set_cuda_paths():
 
 
 def clean_triton_cache():
-    """Remove Triton cache to ensure clean compilation with current CUDA paths."""
     import shutil
     from pathlib import Path
 
@@ -103,17 +102,17 @@ def check_pdfs_for_ocr(script_dir):
         for pdf_path in non_ocr_pdfs:
             message += f"  - {pdf_path}\n"
         message += "\nPlease perform OCR on these by going to the Tools Tab first or remove them from the files selected for processing."
-        
+
         msg_box = QMessageBox()
         msg_box.setWindowTitle("PDFs Need OCR")
         msg_box.setText(message)
         msg_box.setIcon(QMessageBox.Icon.Warning)
-        
+
         msg_box.addButton(QMessageBox.StandardButton.Ok)
         view_report_button = msg_box.addButton("View Report", QMessageBox.ButtonRole.ActionRole)
-        
+
         result = msg_box.exec()
-        
+
         if msg_box.clickedButton() == view_report_button:
             with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp_file:
                 temp_file.write("PDFs that need OCR:\n\n")
@@ -170,7 +169,7 @@ def download_kokoro_tts():
 
     try:
         tts_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         print(f"Downloading Kokoro TTS model from {repo_id}...")
         snapshot_download(
             repo_id=repo_id,
@@ -215,15 +214,6 @@ def download_kobold_executable():
         return False
 
 def normalize_chat_text(text):
-    """
-    Normalizes chat text by processing numbers, currency, and various text patterns.
-    
-    Args:
-        text (str): The input text to normalize
-        
-    Returns:
-        str: The normalized text
-    """
     def split_num(num):
         num = num.group()
         if '.' in num:
@@ -265,27 +255,22 @@ def normalize_chat_text(text):
         a, b = num.group().split('.')
         return ' point '.join([a, ' '.join(b)])
 
-    # Replace section symbol
     text = text.replace('§', ' section ')
-    
-    # Replace smart quotes and other special characters
+
     text = text.replace(chr(8216), "'").replace(chr(8217), "'")
     text = text.replace('«', '"').replace('»', '"')
     text = text.replace(chr(8220), '"').replace(chr(8221), '"')
-    
-    # Normalize titles
+
     text = re.sub(r'\bD[Rr]\.(?= [A-Z])', 'Doctor', text)
     text = re.sub(r'\b(?:Mr\.|MR\.(?= [A-Z]))', 'Mister', text)
     text = re.sub(r'\b(?:Ms\.|MS\.(?= [A-Z]))', 'Miss', text)
     text = re.sub(r'\b(?:Mrs\.|MRS\.(?= [A-Z]))', 'Mrs', text)
-    
-    # Process numbers and currency
+
     text = re.sub(r'\d*\.\d+|\b\d{4}s?\b|(?<!:)\b(?:[1-9]|1[0-2]):[0-5]\d\b(?!:)', split_num, text)
     text = re.sub(r'(?<=\d),(?=\d)', '', text)
     text = re.sub(r'(?i)[$£]\d+(?:\.\d+)?(?: hundred| thousand| (?:[bm]|tr)illion)*\b|[$£]\d+\.\d\d?\b', flip_money, text)
     text = re.sub(r'\d*\.\d+', point_num, text)
-    
-    # Clean up spacing and format
+
     text = re.sub(r'[^\S \n]', ' ', text)
     text = re.sub(r'  +', ' ', text)
     text = re.sub(r'(?<=\n) +(?=\n)', '', text)
@@ -297,17 +282,6 @@ def normalize_chat_text(text):
     return text.strip()
 
 def test_triton_installation():
-   """
-   Tests if Triton is properly installed and working by comparing a simple addition operation between PyTorch's
-   native implementation and a custom Triton kernel. Returns True or False.
-   Example:
-   from triton_test import test_triton_installation
-   is_triton_working = test_triton_installation()
-   if is_triton_working:
-      print("Proceeding with Triton functionality...")
-   else:
-      print("Cannot proceed - Triton is not working properly")
-   """
    logging.debug("Starting Triton installation test")
    try:
        import torch
@@ -365,41 +339,36 @@ def test_triton_installation():
        return False
 
 def supports_flash_attention():
-    """Check if the current CUDA device supports flash attention (compute capability >= 8.0)."""
     logging.debug("Checking flash attention support")
-    
+
     if not torch.cuda.is_available():
         logging.debug("CUDA not available, flash attention not supported")
         return False
-        
+
     major, minor = torch.cuda.get_device_capability()
     logging.debug(f"CUDA compute capability: {major}.{minor}")
-    
+
     supports = major >= 8
     logging.debug(f"Flash attention {'supported' if supports else 'not supported'}")
     return supports
 
 def check_cuda_re_triton():
-    """
-    Checks whether the files required by Triton 3.1.0 are present in the relative paths.
-    This mirrors where the windows_utils.py script within the Triton library will look for them.
-    """
     logging.debug("Starting CUDA files check for Triton")
     venv_base = Path(sys.executable).parent.parent
     nvidia_base_path = venv_base / 'Lib' / 'site-packages' / 'nvidia'
     cuda_runtime = nvidia_base_path / 'cuda_runtime'
-    
+
     logging.debug(f"Virtual environment base path: {venv_base}")
     logging.debug(f"NVIDIA base path: {nvidia_base_path}")
     logging.debug(f"CUDA runtime path: {cuda_runtime}")
-    
+
     files_to_check = [
         cuda_runtime / "bin" / "cudart64_12.dll",
         cuda_runtime / "bin" / "ptxas.exe",
         cuda_runtime / "include" / "cuda.h",
         cuda_runtime / "lib" / "x64" / "cuda.lib"
     ]
-    
+
     logging.debug("Beginning file existence checks")
     print("Checking CUDA files:")
     for file_path in files_to_check:
@@ -414,7 +383,7 @@ def get_model_native_precision(embedding_model_name, vector_models):
     logging.debug(f"Looking for precision for model: {embedding_model_name}")
     model_name = os.path.basename(embedding_model_name)
     repo_style_name = model_name.replace('--', '/')
-    
+
     for group_name, group_models in vector_models.items():
         logging.debug(f"Checking group: {group_name}")
         for model in group_models:
@@ -493,7 +462,6 @@ def get_appropriate_dtype(compute_device, use_half, model_native_precision):
         logging.debug(f"Unrecognized precision '{model_native_precision}', returning float32")
         return torch.float32
 
-# IMPLEMENT THIS IF/WHEN A USER TRIES TO CREATE A DB WITH A CPU WITH AN INCOMPATIBLE VISION MODEL
 def cpu_db_creation_vision_model_compatibility(directory, image_extensions, config_path):
     has_images = False
     for root, _, files in os.walk(directory):
@@ -521,18 +489,12 @@ def cpu_db_creation_vision_model_compatibility(directory, image_extensions, conf
     return True, None
 
 def print_first_citation_metadata(metadata_list):
-    """
-    DEBUG: Print the metadata attributes/fields for the first citation in the list.
-    """
     if metadata_list:
         print("Metadata attributes/fields for the first citation:")
         for key, value in metadata_list[0].items():
             print(f"{key}: {value}")
 
 def format_citations(metadata_list):
-    """
-    Create citations with relevance scores and, for .pdf files, page numbers.
-    """
     def group_metadata(metadata_list):
         grouped = {}
         for metadata in metadata_list:
@@ -700,7 +662,7 @@ def backup_database_incremental(new_database_name):
        except Exception as e:
            logging.debug(f"Failed to remove existing backup: {e}")
            print(f"Warning: Could not remove existing backup of {new_database_name}: {e}")
-           
+
    try:
        shutil.copytree(source_db_path, backup_db_path)
        logging.debug(f"Successfully created backup of {new_database_name}")
@@ -708,12 +670,8 @@ def backup_database_incremental(new_database_name):
        logging.debug(f"Backup failed: {e}")
        print(f"Error backing up {new_database_name}: {e}")
 
-    # log of the latest backup info
-    # with open(backup_directory / "backup_manifest.txt", "a") as manifest:
-        # manifest.write(f"{new_database_name} backed up at {datetime.now()}\n")
 
 def open_file(file_path):
-    # open a file with the system's default program
     try:
         if platform.system() == "Windows":
             os.startfile(file_path)
@@ -731,18 +689,15 @@ def delete_file(file_path):
         QMessageBox.warning(None, "Unable to delete file(s), please delete manually.")
 
 def check_preconditions_for_db_creation(script_dir, database_name):
-    # is db name valid
     if not database_name or len(database_name) < 3 or database_name.lower() in ["null", "none"]:
         QMessageBox.warning(None, "Invalid Name", "Name must be at least 3 characters long and not be 'null' or 'none.'")
         return False, "Invalid database name."
 
-    # is the db name already used
     database_folder_path = script_dir / "Docs_for_DB" / database_name
     if database_folder_path.exists():
         QMessageBox.warning(None, "Database Exists", "A database with this name already exists. Please choose a different database name.")
         return False, "Database already exists."
 
-    # does config.yaml exist
     config_path = script_dir / 'config.yaml'
     if not config_path.exists():
         QMessageBox.warning(None, "Configuration Missing", "The configuration file (config.yaml) is missing.")
@@ -751,35 +706,30 @@ def check_preconditions_for_db_creation(script_dir, database_name):
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
 
-    # can't process images on mac
     image_extensions = ['.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tif', '.tiff']
     documents_dir = script_dir / "Docs_for_DB"
     if platform.system() == "Darwin" and any(file.suffix in image_extensions for file in documents_dir.iterdir() if file.is_file()):
         QMessageBox.warning(None, "MacOS Limitation", "Image processing has been disabled for MacOS until a fix can be implemented. Please remove all image files and try again.")
         return False, "Image files present on MacOS."
 
-    # is vector model selected
     embedding_model_name = config.get('EMBEDDING_MODEL_NAME')
     if not embedding_model_name:
         QMessageBox.warning(None, "Model Missing", "You must first download an embedding model, select it, and choose documents first before proceeding.")
         return False, "Embedding model not selected."
 
-    # are documents selected
     if not any(file.is_file() for file in documents_dir.iterdir()):
         QMessageBox.warning(None, "No Documents", "No documents are yet added to be processed.")
         return False, "No documents in Docs_for_DB."
 
-    # is gpu-acceleration selected
     compute_device = config.get('Compute_Device', {}).get('available', [])
     database_creation = config.get('Compute_Device', {}).get('database_creation')
     if ("cuda" in compute_device or "mps" in compute_device) and database_creation == "cpu":
-        reply = QMessageBox.question(None, 'Warning', 
-                                     "GPU-acceleration is available and highly recommended. Click OK to proceed or Cancel to go back and change the device.", 
+        reply = QMessageBox.question(None, 'Warning',
+                                     "GPU-acceleration is available and highly recommended. Click OK to proceed or Cancel to go back and change the device.",
                                      QMessageBox.Ok | QMessageBox.Cancel, QMessageBox.Cancel)
         if reply == QMessageBox.Cancel:
             return False, "User cancelled operation based on device check."
 
-    # if no cuda and half selected, inform user and exit early
     if not torch.cuda.is_available():
         with open(config_path, 'r') as file:
             config = yaml.safe_load(file)
@@ -791,13 +741,11 @@ def check_preconditions_for_db_creation(script_dir, database_name):
             QMessageBox.warning(None, "CUDA Unavailable for Half-Precision", message)
             return False, "CUDA unavailable for half-precision operation."
 
-    # check for PDFs that need OCR
     ocr_check, ocr_message = check_pdfs_for_ocr(script_dir)
     if not ocr_check:
         return False, ocr_message
 
-    # final confirmation
-    confirmation_reply = QMessageBox.question(None, 'Confirmation', 
+    confirmation_reply = QMessageBox.question(None, 'Confirmation',
                                              "Creating a vector database can take a significant amount of time and cannot be cancelled. Click OK to proceed.",
                                              QMessageBox.Ok | QMessageBox.Cancel, QMessageBox.Cancel)
     if confirmation_reply == QMessageBox.Cancel:
@@ -805,7 +753,6 @@ def check_preconditions_for_db_creation(script_dir, database_name):
 
     return True, ""
 
-# gui.py
 def check_preconditions_for_submit_question(script_dir):
     config_path = script_dir / 'config.yaml'
 
@@ -821,11 +768,9 @@ def check_preconditions_for_submit_question(script_dir):
 def my_cprint(*args, **kwargs):
     filename = os.path.basename(sys._getframe(1).f_code.co_filename)
     modified_message = f"{args[0]}"
-    # modified_message = f"{filename}: {args[0]}" # uncomment to print script name as well
     kwargs['flush'] = True
     cprint(modified_message, *args[1:], **kwargs)
 
-# not currently used
 def get_cuda_compute_capabilities():
    logging.debug("Getting CUDA compute capabilities")
    ccs = []
@@ -849,7 +794,6 @@ def get_cuda_version():
    logging.debug(f"CUDA version {major}.{minor} -> {version}")
    return version
 
-# returns True if cuda exists and supports compute 8.6 of higher
 def has_bfloat16_support():
    logging.debug("Checking bfloat16 support")
 
@@ -897,7 +841,7 @@ def get_device_and_precision():
            precision = "bfloat16"
            logging.debug("Using bfloat16 precision (Ampere or newer GPU)")
        else:
-           precision = "float16" 
+           precision = "float16"
            logging.debug("Using float16 precision (pre-Ampere GPU)")
    else:
        device = "cpu"
@@ -908,18 +852,12 @@ def get_device_and_precision():
    return device, precision
 
 class FlashAttentionUtils:
-    """
-    Flash Attention 2 is only supported on Ampere and newer GPUs
-    https://github.com/Dao-AILab/flash-attention/blob/0dfb28174333d9eefb7c1dd4292690a8458d1e89/csrc/flash_attn/flash_api.cpp#L370
-    """
     @staticmethod
     def check_package_availability():
-        # check if flash_attn is installed
         return importlib.util.find_spec("flash_attn") is not None
 
     @staticmethod
     def check_version_compatibility():
-        # check flash_attn version
         if not FlashAttentionUtils.check_package_availability():
             return False
         flash_attention_version = version.parse(importlib.metadata.version("flash_attn"))
@@ -931,17 +869,14 @@ class FlashAttentionUtils:
 
     @staticmethod
     def check_dtype_compatibility(dtype):
-        # check if dtype is compatible
         return dtype in [torch.float16, torch.bfloat16]
 
     @staticmethod
     def check_gpu_initialization():
-        # check if CUDA is available and default device is CUDA
         return torch.cuda.is_available() and torch.cuda.current_device() >= 0
 
     @staticmethod
     def check_device_map(device_map):
-        # check if device_map is compatible
         if device_map is None:
             return True
         if isinstance(device_map, dict):
@@ -950,7 +885,6 @@ class FlashAttentionUtils:
 
     @classmethod
     def is_flash_attention_compatible(cls, dtype=None, device_map=None):
-        # run all checks
         checks = [
             cls.check_package_availability(),
             cls.check_version_compatibility(),
@@ -962,18 +896,10 @@ class FlashAttentionUtils:
 
     @staticmethod
     def enable_flash_attention(config):
-        # Enable Flash Attention in the config
         config._attn_implementation = "flash_attention_2"
         return config
 
 def set_logging_level():
-    """
-    CRITICAL displays only CRITICAL.
-    ERROR displays ERROR and CRITICAL.
-    WARNING displays WARNING, ERROR, and CRITICAL.
-    INFO displays INFO, WARNING, ERROR, and CRITICAL.
-    DEBUG displays DEBUG, INFO, WARNING, ERROR, and CRITICAL.
-    """
     library_levels = {
         "accelerate": logging.WARNING,
         "bitsandbytes": logging.WARNING,
@@ -1018,20 +944,10 @@ def set_logging_level():
         logging.getLogger(lib).setLevel(level)
 
 def prepare_long_path(base_path: str, filename: str) -> str:
-    """
-    Prepares a path for long filenames, especially for Windows systems.
-    
-    Args:
-    base_path (str): The base directory path.
-    filename (str): The original filename.
-    
-    Returns:
-    str: Prepared full path, using extended-length path syntax if necessary.
-    """
     base_path = os.path.normpath(base_path)
     full_path = os.path.join(base_path, filename)
-    
+
     if os.name == 'nt' and len(full_path) > 255:
         full_path = "\\\\?\\" + os.path.abspath(full_path)
-    
+
     return full_path

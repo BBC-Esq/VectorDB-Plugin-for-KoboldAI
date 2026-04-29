@@ -14,7 +14,7 @@ from module_process_images import choose_image_loader
 
 CONFIG_FILE = 'config.yaml'
 
-logging.basicConfig(level=logging.DEBUG) # doublecheck how to suppress cuda version info messsage
+logging.basicConfig(level=logging.DEBUG)
 
 class ImageProcessorThread(QThread):
     finished = pyqtSignal(list)
@@ -92,18 +92,13 @@ class VisionToolSettingsTab(QWidget):
             else:
                 content = "Document is missing 'page_content'."
                 filename = 'Unknown filename'
-            
-            # Wrap the content to 100 characters
+
             wrapped_content = textwrap.fill(content, width=100)
             contents.append((filename, wrapped_content))
         
         return contents
 
     def save_page_contents(self, contents):
-        """
-        Takes a list of (filename, page_content) tuples, writes them to a file named 'sample_vision_summaries.txt'
-        in the same directory as the script, and then opens the file.
-        """
         script_dir = Path(__file__).resolve().parent
         output_file = script_dir / "sample_vision_summaries.txt"
         

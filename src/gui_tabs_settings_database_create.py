@@ -12,8 +12,7 @@ class ChunkSettingsTab(QWidget):
             self.compute_device_options = config_data['Compute_Device']['available']
             self.database_creation_device = config_data['Compute_Device']['database_creation']
         grid_layout = QGridLayout()
-        
-        # Device selection and current setting
+
         self.device_label = QLabel("Device:")
         grid_layout.addWidget(self.device_label, 0, 0)
         self.device_combo = QComboBox()
@@ -25,7 +24,6 @@ class ChunkSettingsTab(QWidget):
         self.current_device_label = QLabel(f"{self.database_creation_device}")
         grid_layout.addWidget(self.current_device_label, 0, 1)
         
-        # Chunk size and current setting (moved to the left)
         self.chunk_size_label = QLabel("Chunk Size:")
         grid_layout.addWidget(self.chunk_size_label, 0, 3)
         self.chunk_size_edit = QLineEdit()
@@ -36,7 +34,6 @@ class ChunkSettingsTab(QWidget):
         self.current_size_label = QLabel(f"{current_size}")
         grid_layout.addWidget(self.current_size_label, 0, 4)
         
-        # Chunk overlap and current setting (moved to the right)
         self.chunk_overlap_label = QLabel("Chunk Overlap:")
         grid_layout.addWidget(self.chunk_overlap_label, 0, 6)
         self.chunk_overlap_edit = QLineEdit()

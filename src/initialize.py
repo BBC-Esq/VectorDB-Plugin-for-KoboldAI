@@ -15,25 +15,9 @@ def get_compute_device_info():
         available_devices.append('cuda')
         gpu_brand = "AMD" if torch.version.hip else "NVIDIA" if torch.version.cuda else None
 
-    # if torch.backends.mps.is_available():
-        # available_devices.append('mps')
-        # gpu_brand = "Apple"
-
     return {'available': available_devices, 'gpu_brand': gpu_brand}
 
 def get_platform_info():
-    """
-    Key Differences between `platform.system()` and `sysconfig.get_platform()`
-    ------------------------------|---------------------------------------------------------------------|
-    | Feature                     | `platform.system()`                  | `sysconfig.get_platform(     |
-    |-----------------------------|-----------------------------------|---------------------------------|
-    | Primary Purpose             | Identify the operating system.    | Provide detailed platform tags. |
-    | Output Granularity          | Broad (e.g., `windows`, `linux`). | Specific (e.g., `win-amd64`).   |
-    | Includes CPU Architecture?  | No                                | Yes                             |
-    | Includes Build Information? | No                                | Yes (e.g., macOS version).      |
-    | Use Case                    | Simple OS detection.              | Detailed compatibility checks.  |
-    ------------------------------------------------------------------|---------------------------------|
-    """
     return {'os': platform.system().lower()}
 
 def get_supported_quantizations(device_type):
@@ -45,7 +29,7 @@ def get_supported_quantizations(device_type):
 
 def update_config_file(**system_info):
     full_config_path = Path('config.yaml').resolve()
-    
+
     with open(full_config_path, 'r', encoding='utf-8') as stream:
         config_data = yaml.safe_load(stream)
 
@@ -83,7 +67,7 @@ def check_for_necessary_folders():
         "Models/whisper",
         "Scraped_Documentation",
     ]
-    
+
     for folder in folders:
         Path(folder).mkdir(exist_ok=True)
 
@@ -130,7 +114,6 @@ def main():
     update_config_file(Compute_Device=compute_device_info, Platform_Info=platform_info)
     check_for_necessary_folders()
     delete_chat_history()
-    # restore_vector_db_backup()
     clear_pickle_folder()
 
 if __name__ == "__main__":

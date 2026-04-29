@@ -1,5 +1,3 @@
-# gui_tabs_databases.py
-
 import time
 import gc
 import json
@@ -38,7 +36,7 @@ class CreateDatabaseProcess:
 
 class CreateDatabaseThread(QThread):
     creationComplete = Signal()
-    
+
     def __init__(self, database_name, model_name, parent=None):
         super().__init__(parent)
         self.database_name = database_name
@@ -46,7 +44,6 @@ class CreateDatabaseThread(QThread):
         self.process = None
 
     def run(self):
-        # create db in a separate process
         self.process = multiprocessing.Process(target=create_vector_db_in_process, args=(self.database_name,))
         self.process.start()
         self.process.join()
@@ -54,7 +51,6 @@ class CreateDatabaseThread(QThread):
         my_cprint(f"{self.model_name} removed from memory.", "red")
         self.creationComplete.emit()
 
-        # after db creation, backup db and update config
         time.sleep(.2)
         self.update_config_with_database_name()
 
@@ -137,10 +133,8 @@ class DatabasesTab(QWidget):
         self.sync_combobox_with_config()
 
     def refresh_model_combobox(self, index):
-        """Refreshes the combobox contents before showing the dropdown"""
         current_text = self.model_combobox.currentText()
         self.populate_model_combobox()
-        # Restore the previous selection if it still exists
         idx = self.model_combobox.findText(current_text)
         if idx >= 0:
             self.model_combobox.setCurrentIndex(idx)
@@ -151,13 +145,12 @@ class DatabasesTab(QWidget):
             self.sync_combobox_with_config()
 
     def populate_model_combobox(self):
-        # 1. populates comobobox when script loads
         self.model_combobox.clear()
         self.model_combobox.addItem("Select a model", None)
 
         script_dir = Path(__file__).resolve().parent
         vector_dir = script_dir / "Models" / "vector"
-        
+
         if not vector_dir.exists():
             print(f"Warning: Vector directory not found at {vector_dir}")
             return
@@ -169,18 +162,17 @@ class DatabasesTab(QWidget):
                 display_name = folder.name
                 full_path = str(folder)
                 self.model_combobox.addItem(display_name, full_path)
-        
+
         if not model_found:
             print(f"Warning: No model directories found in {vector_dir}")
 
     def sync_combobox_with_config(self):
-        # 2. after the script loads, sets the model chosen to what is in the config
         config_path = Path(__file__).resolve().parent / "config.yaml"
         if config_path.exists():
             with open(config_path, 'r', encoding='utf-8') as file:
                 config_data = yaml.safe_load(file) or {}
             current_model = config_data.get("EMBEDDING_MODEL_NAME")
-            
+
             if current_model:
                 model_index = self.model_combobox.findData(current_model)
                 if model_index != -1:
@@ -194,7 +186,6 @@ class DatabasesTab(QWidget):
             self.model_combobox.setCurrentIndex(0)
 
     def on_model_selected(self, index):
-        # 3. updates the config when a user selects a different model
         selected_path = self.model_combobox.itemData(index)
         config_path = Path(__file__).resolve().parent / "config.yaml"
         config_data = {}
@@ -206,7 +197,6 @@ class DatabasesTab(QWidget):
         if selected_path:
             config_data["EMBEDDING_MODEL_NAME"] = selected_path
 
-            # hardcode dimensions for stella)
             if "stella" in selected_path.lower() or "static-retrieval" in selected_path.lower():
                 config_data["EMBEDDING_MODEL_DIMENSIONS"] = 1024
             else:
@@ -216,7 +206,6 @@ class DatabasesTab(QWidget):
                         with open(config_json_path, 'r', encoding='utf-8') as json_file:
                             model_config = json.load(json_file)
 
-                        # Extract "hidden_size" or "d_model"
                         embedding_dimensions = model_config.get("hidden_size") or model_config.get("d_model")
                         if embedding_dimensions and isinstance(embedding_dimensions, int):
                             config_data["EMBEDDING_MODEL_DIMENSIONS"] = embedding_dimensions
@@ -241,7 +230,7 @@ class DatabasesTab(QWidget):
         layout.addWidget(tree_view)
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
         group_box.toggled.connect(lambda checked, gb=group_box: self.toggle_group_box(gb, checked))
         return group_box
 
@@ -298,13 +287,13 @@ class DatabasesTab(QWidget):
         self.choose_docs_button.setDisabled(True)
         self.model_combobox.setDisabled(True)
         self.database_name_input.setDisabled(True)
-        
+
         database_name = self.database_name_input.text().strip()
         model_name = self.model_combobox.currentText()
         script_dir = Path(__file__).resolve().parent
-        
+
         checks_passed, message = check_preconditions_for_db_creation(script_dir, database_name)
-        
+
         if not checks_passed:
             self.create_db_button.setDisabled(False)
             self.choose_docs_button.setDisabled(False)
@@ -314,7 +303,7 @@ class DatabasesTab(QWidget):
             return
 
         print(f"Database will be named: '{database_name}'")
-        
+
         self.create_database_thread = CreateDatabaseThread(database_name=database_name, model_name=model_name, parent=self)
         self.create_database_thread.creationComplete.connect(self.reenable_create_db_button)
         self.create_database_thread.start()

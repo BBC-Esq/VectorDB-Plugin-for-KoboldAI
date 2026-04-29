@@ -3,26 +3,19 @@ import requests
 import threading
 import cpuinfo
 import subprocess
-from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                               QLabel, QComboBox, QPushButton, QProgressBar, QGridLayout, 
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+                               QLabel, QComboBox, QPushButton, QProgressBar, QGridLayout,
                                QCheckBox, QMessageBox, QGroupBox)
 from PySide6.QtCore import Qt, QThread, Signal
 import platform
 
-# pip install py-cpuinfo pyside6 requests
 
 def check_avx2_support():
-    """
-    Check if the CPU supports AVX2 instruction set.
-    """
     info = cpuinfo.get_cpu_info()
     flags = info['flags']
     return 'avx2' in flags
 
 def check_nvidia_gpu():
-    """
-    Check if the system has an Nvidia GPU with nvidia-smi installed.
-    """
     try:
         result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
         return result.returncode == 0
@@ -30,14 +23,11 @@ def check_nvidia_gpu():
         return False
 
 def get_nvidia_gpu_names():
-    """
-    Get NVIDIA GPU names.
-    """
     CUDevicesNames = ["", "", "", ""]
     try:
         output = subprocess.run(['nvidia-smi', '--query-gpu=name', '--format=csv,noheader'], capture_output=True, text=True, check=True).stdout
         FetchedCUdevices = [line.strip() for line in output.splitlines()]
-        
+
         for idx in range(min(len(FetchedCUdevices), 4)):
             CUDevicesNames[idx] = FetchedCUdevices[idx]
     except Exception as e:
@@ -45,19 +35,16 @@ def get_nvidia_gpu_names():
     return CUDevicesNames
 
 def get_vulkan_info():
-    """
-    Get Vulkan device names and types.
-    """
     VKDevicesNames = ["", "", "", ""]
     VKIsDGPU = [0, 0, 0, 0]
     try:
         output = subprocess.run(['vulkaninfo', '--summary'], capture_output=True, text=True, check=True).stdout
         devicelist = [line.split("=")[1].strip() for line in output.splitlines() if "deviceName" in line]
         devicetypes = [line.split("=")[1].strip() for line in output.splitlines() if "deviceType" in line]
-        
+
         for idx, dname in enumerate(devicelist[:4]):
             VKDevicesNames[idx] = dname
-        
+
         if len(devicetypes) == len(devicelist):
             for idx, dvtype in enumerate(devicetypes[:4]):
                 VKIsDGPU[idx] = 1 if dvtype == "PHYSICAL_DEVICE_TYPE_DISCRETE_GPU" else 0
@@ -116,7 +103,6 @@ class MainWindow(QMainWindow):
         self.progress_bar = QProgressBar()
         self.layout.addWidget(self.progress_bar)
 
-        # First group box
         info_group = QGroupBox()
         info_layout = QVBoxLayout(info_group)
 
@@ -139,7 +125,6 @@ class MainWindow(QMainWindow):
 
         self.layout.addWidget(info_group)
 
-        # Second group box
         download_group = QGroupBox()
         download_layout = QVBoxLayout(download_group)
 
@@ -188,17 +173,15 @@ class MainWindow(QMainWindow):
     def create_table_like_layout(self):
         grid_layout = QGridLayout()
 
-        # Headers
         headers = ["Binary", "Requires AVX2", "CUDA Support"]
         for col, header in enumerate(headers):
             label = QLabel(header)
             label.setStyleSheet("font-weight: bold;")
             grid_layout.addWidget(label, 0, col, Qt.AlignCenter)
 
-        # Content
         for row, binary in enumerate(download_links.keys(), start=1):
             grid_layout.addWidget(QLabel(binary), row, 0)
-            
+
             avx2_checkbox = QCheckBox()
             avx2_checkbox.setChecked(binary != "koboldcpp-oldpc.exe")
             avx2_checkbox.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -236,9 +219,6 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         QMessageBox.critical(self, "Error", f"An error occurred while downloading the file: {error_message}")
 
-# Asset names changed in koboldcpp v1.94.2 (June 2025): old `koboldcpp_cu12.exe`,
-# `koboldcpp_oldcpu.exe`, and `koboldcpp_nocuda.exe` were removed. The CUDA build is
-# now bundled into `koboldcpp.exe`; underscores became hyphens for the others.
 download_links = {
     "koboldcpp.exe": "https://github.com/LostRuins/koboldcpp/releases/latest/download/koboldcpp.exe",
     "koboldcpp-nocuda.exe": "https://github.com/LostRuins/koboldcpp/releases/latest/download/koboldcpp-nocuda.exe",

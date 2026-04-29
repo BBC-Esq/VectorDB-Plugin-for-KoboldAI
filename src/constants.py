@@ -18,7 +18,6 @@ priority_libs = {
             "nvidia-ml-py==12.570.86",
         ],
         "CPU": [
-            # CPU only libraries would go here
         ],
         "COMMON": [
             "https://github.com/simonflueckiger/tesserocr-windows_build/releases/download/tesserocr-v2.8.0-tesseract-5.5.0/tesserocr-2.8.0-cp311-cp311-win_amd64.whl",
@@ -43,7 +42,6 @@ priority_libs = {
             "nvidia-ml-py==12.570.86",
         ],
         "CPU": [
-            # CPU only libraries would go here
         ],
         "COMMON": [
             "https://github.com/simonflueckiger/tesserocr-windows_build/releases/download/tesserocr-v2.8.0-tesseract-5.5.0/tesserocr-2.8.0-cp312-cp312-win_amd64.whl",
@@ -55,12 +53,12 @@ libs = [
     "accelerate==1.5.1",
     "aiofiles==24.1.0",
     "aiohappyeyeballs==2.6.1",
-    "aiohttp==3.11.13", # langchain libraries require <4
-    "aiosignal==1.3.2", # only required by aiohttp
+    "aiohttp==3.11.13",
+    "aiosignal==1.3.2",
     "anndata==0.11.3",
     "annotated-types==0.7.0",
     "anyio==4.8.0",
-    "array_api_compat==1.11.1", # only anndata requires
+    "array_api_compat==1.11.1",
     "async-timeout==5.0.1",
     "attrs==25.2.0",
     "av==14.2.0",
@@ -71,54 +69,54 @@ libs = [
     "certifi==2025.1.31",
     "cffi==1.17.1",
     "chardet==5.2.0",
-    "charset-normalizer==3.4.1", # requests requires <4
+    "charset-normalizer==3.4.1",
     "chattts==0.2.2",
     "click==8.1.8",
-    "cloudpickle==3.1.1", # only required by tiledb-cloud and 3+ is only supported by tiledb-cloud 0.13+
+    "cloudpickle==3.1.1",
     "colorama==0.4.6",
     "coloredlogs==15.0.1",
-    "contourpy==1.3.1", # onlyk required by matplotlib
-    "cryptography==44.0.2", # only required by unstructured library
+    "contourpy==1.3.1",
+    "cryptography==44.0.2",
     "ctranslate2==4.5.0",
     "cycler==0.12.1",
     "dataclasses-json==0.6.7",
     "datasets==3.3.2",
-    "deepdiff==8.3.0", # required by unstructured
-    "Deprecated==1.2.18", # only needed by pikepdf
-    "deprecation==2.1.0", # only needed by ocrmypdf
-    "dill==0.3.8", # datasets 3.2.0 requires <0.3.9; multiprocess 0.70.16 requires >=0.3.8
+    "deepdiff==8.3.0",
+    "Deprecated==1.2.18",
+    "deprecation==2.1.0",
+    "dill==0.3.8",
     "distro==1.9.0",
     "docx2txt==0.8",
     "einops==0.8.1",
     "einx==0.3.0",
     "emoji==2.14.1",
     "encodec==0.1.1",
-    "et-xmlfile==2.0.0", # openpyxl requires; caution...openpyxl 3.1.5 (6/28/2024) predates et-xmlfile 2.0.0 (10/25/2024)
-    "eval-type-backport==0.2.2", # only required by unstructured
-    "fastcore==1.7.29", # only required by whisperspeech
-    "fastprogress==1.0.3", # only required by whisperspeech
+    "et-xmlfile==2.0.0",
+    "eval-type-backport==0.2.2",
+    "fastcore==1.7.29",
+    "fastprogress==1.0.3",
     "filetype==1.2.0",
     "filelock==3.17.0",
-    "fonttools==4.56.0", # only required by matplotlib
+    "fonttools==4.56.0",
     "frozendict==2.4.6",
     "frozenlist==1.5.0",
-    "fsspec==2024.9.0", # datasets 3.2.0 requires <=2024.9.0
+    "fsspec==2024.9.0",
     "greenlet==3.1.1",
     "gTTS==2.5.4",
     "h11==0.14.0",
     "h5py==3.13.0",
-    "html5lib==1.1", # only required by unstructured
+    "html5lib==1.1",
     "httpcore==1.0.7",
     "httpx==0.28.1",
     "httpx-sse==0.4.0",
-    "huggingface-hub==0.29.3", # tokenizers 0.20.3 requires >=0.16.4,<1.0
+    "huggingface-hub==0.29.3",
     "humanfriendly==10.0",
     "HyperPyYAML==1.2.2",
     "idna==3.10",
     "img2pdf==0.6.0",
     "importlib_metadata==8.6.1",
     "Jinja2==3.1.6",
-    "jiter==0.9.0", # required by openai newer versions
+    "jiter==0.9.0",
     "joblib==1.4.2",
     "jsonpatch==1.33",
     "jsonpath-python==1.0.6",
@@ -131,52 +129,52 @@ libs = [
     "langchain-text-splitters==0.3.6",
     "langdetect==1.0.9",
     "langsmith==0.3.13",
-    "llvmlite==0.44.0", # only required by numba
+    "llvmlite==0.44.0",
     "lxml==5.3.1",
     "Markdown==3.7",
     "markdown-it-py==3.0.0",
     "MarkupSafe==3.0.2",
     "marshmallow==3.26.1",
-    "matplotlib==3.10.1", # uniquely requires pyparsing==3.1.2 cycler==0.12.1 kiwisolver==1.4.5
+    "matplotlib==3.10.1",
     "mdurl==0.1.2",
     "more-itertools==10.6.0",
-    "mpmath==1.3.0", # sympy 1.13.1 requires less than 1.4
+    "mpmath==1.3.0",
     "msg-parser==1.2.0",
     "multidict==6.1.0",
-    "multiprocess==0.70.16", # datasets 3.2.0 requires <0.70.17
+    "multiprocess==0.70.16",
     "mypy-extensions==1.0.0",
     "natsort==8.4.0",
     "nest-asyncio==1.6.0",
     "networkx==3.4.2",
-    "nltk==3.9.1", # not higher; gives unexplained error
-    "numba==0.61.0", # only required by openai-whisper
-    "numpy==1.26.4", # langchain libraries <2; numba <2.1; scipy <2.3; chattts <2.0.0
+    "nltk==3.9.1",
+    "numba==0.61.0",
+    "numpy==1.26.4",
     "ocrmypdf==16.10.0",
     "olefile==0.47",
-    "openai==1.66.2", # only required by chat_lm_studio.py script and whispers2t (if using openai vanilla backend)
-    "openai-whisper==20240930", # only required by whisper_s2t (if using openai vanilla backend)
+    "openai==1.66.2",
+    "openai-whisper==20240930",
     "openpyxl==3.1.5",
     "optimum==1.24.0",
     "ordered-set==4.1.0",
-    "orderly-set==5.3.0", # deepdiff 8.2.0 requires orderly-set=5.3.0,<6
+    "orderly-set==5.3.0",
     "orjson==3.10.15",
     "packaging==24.2",
     "pandas==2.2.3",
-    "pdfminer.six==20240706", # only needed by ocrmypdf
-    "pikepdf==9.5.2", # only needed by ocrmypdf
+    "pdfminer.six==20240706",
+    "pikepdf==9.5.2",
     "pillow==11.1.0",
-    "pi-heif==0.21.0", # only needed by ocrmypdf, but not for my usage of ocrmypdf
+    "pi-heif==0.21.0",
     "pipdeptree",
     "platformdirs==4.3.6",
-    "pluggy==1.5.0", # only needed by ocrmypdf
+    "pluggy==1.5.0",
     "propcache==0.3.0",
     "protobuf==5.29.3",
     "psutil==7.0.0",
     "pyarrow==19.0.1",
-    "pybase16384==0.3.8", # only required by chattts
+    "pybase16384==0.3.8",
     "pycparser==2.22",
     "pydantic==2.10.6",
-    "pydantic_core==2.27.2", # pydantic 2.10.6 requires pydantic_core==2.27.2
+    "pydantic_core==2.27.2",
     "pydantic-settings==2.7.1",
     "Pygments==2.19.1",
     "PyOpenGL==3.1.9",
@@ -190,7 +188,7 @@ libs = [
     "python-dotenv==1.0.1",
     "python-iso639==2025.2.18",
     "python-magic==0.4.27",
-    "python-oxmsg==0.0.2", # only required by unstructured library
+    "python-oxmsg==0.0.2",
     "pytz==2025.1",
     "PyYAML==6.0.2",
     "rapidfuzz==3.12.2",
@@ -211,11 +209,11 @@ libs = [
     "soundfile==0.13.1",
     "soupsieve==2.6",
     "speechbrain==0.5.16",
-    "SQLAlchemy==2.0.39", # langchain and langchain-community require less than 3.0.0
-    "sseclient-py==1.8.0", # only required by Kobold
-    "sympy==1.13.1", # torch 2.6.0 requires sympy==1.13.1
+    "SQLAlchemy==2.0.39",
+    "sseclient-py==1.8.0",
+    "sympy==1.13.1",
     "tabulate==0.9.0",
-    "tblib==3.0.0", # only tiledb-cloud requires
+    "tblib==3.0.0",
     "tenacity==9.0.0",
     "termcolor==2.5.0",
     "tessdata==1.0.0",
@@ -233,18 +231,18 @@ libs = [
     "typing_extensions==4.12.2",
     "unstructured-client==0.31.1",
     "tzdata==2025.1",
-    "urllib3==2.3.0", # requests 2.32.3 requires <3
+    "urllib3==2.3.0",
     "vector-quantize-pytorch==1.22.2",
     "vocos==0.1.0",
     "watchdog==6.0.0",
-    "webdataset==0.2.111", # required by all TTS libraries
-    "webencodings==0.5.1", # only required by html5lib
+    "webdataset==0.2.111",
+    "webencodings==0.5.1",
     "wrapt==1.17.2",
     "xlrd==2.0.1",
     "xxhash==3.5.0",
-    "yarl==1.18.3", # aiohttp requires <2
+    "yarl==1.18.3",
     "zipp==3.21.0",
-    "zstandard==0.23.0" # only required by langsmith 3+
+    "zstandard==0.23.0"
 ]
 
 full_install_libs = [
@@ -266,7 +264,6 @@ VECTOR_MODELS = {
             'parameters': '137m',
             'precision': 'float32'
         },
-        # compiles with triton and search requires cuda
         {
             'name': 'Alibaba-gte-modernbert-base',
             'dimensions': 768,
@@ -548,7 +545,6 @@ VISION_MODELS = {
 }
 
 WHISPER_MODELS = {
-    # LARGE-V3
     'Distil Whisper large-v3 - float32': {
         'name': 'Distil Whisper large-v3',
         'precision': 'float32',
@@ -597,7 +593,6 @@ WHISPER_MODELS = {
         'optimal_batch_size': 3,
         'vram': '3.3 GB'
     },
-    # MEDIUM.EN
     'Distil Whisper medium.en - float32': {
         'name': 'Distil Whisper large-v3',
         'precision': 'float32',
@@ -646,7 +641,6 @@ WHISPER_MODELS = {
         'optimal_batch_size': 7,
         'vram': '1.8 GB'
     },
-    # SMALL.EN
     'Distil Whisper small.en - float32': {
         'name': 'Distil Whisper small.en',
         'precision': 'float32',
@@ -695,7 +689,6 @@ WHISPER_MODELS = {
         'optimal_batch_size': 15,
         'vram': '1.1 GB'
     },
-    # BASE.EN
     'Whisper base.en - float32': {
         'name': 'Whisper base.en',
         'precision': 'float32',
@@ -720,7 +713,6 @@ WHISPER_MODELS = {
         'optimal_batch_size': 23,
         'vram': '0.8 GB'
     },
-    # TINY.EN
     'Whisper tiny.en - float32': {
         'name': 'Whisper tiny.en',
         'precision': 'float32',
@@ -748,7 +740,6 @@ WHISPER_MODELS = {
 }
 
 DOCUMENT_LOADERS = {
-    # ".pdf": "PyMuPDFLoader",
     ".pdf": "CustomPyMuPDFLoader",
     ".docx": "Docx2txtLoader",
     ".txt": "TextLoader",

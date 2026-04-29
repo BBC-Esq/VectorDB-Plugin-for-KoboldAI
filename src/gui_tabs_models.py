@@ -60,7 +60,7 @@ class VectorModelsTab(QWidget):
            group_layout.setVerticalSpacing(0)
            group_layout.setHorizontalSpacing(0)
            group_box.setLayout(group_layout)
-           group_layout.setContentsMargins(0, 10, 0, 0)  # left, top, right, bottom
+           group_layout.setContentsMargins(0, 10, 0, 0)
            
            size_policy = group_box.sizePolicy()
            size_policy.setVerticalStretch(self.stretch_factors.get(vendor, 1))

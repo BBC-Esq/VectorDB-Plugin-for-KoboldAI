@@ -1,5 +1,3 @@
-# works with langchain 0.3+
-
 import os
 import datetime
 import hashlib
@@ -18,7 +16,6 @@ def extract_common_metadata(file_path):
     file_path = os.path.realpath(file_path)
     file_name = os.path.basename(file_path)
     file_type = os.path.splitext(file_path)[1]
-    # file_size = os.path.getsize(file_path)
     creation_date = datetime.datetime.fromtimestamp(os.path.getctime(file_path)).isoformat()
     modification_date = datetime.datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat()
     file_hash = compute_file_hash(file_path)
@@ -27,7 +24,6 @@ def extract_common_metadata(file_path):
         "file_path": file_path,
         "file_type": file_type,
         "file_name": file_name,
-        # "file_size": file_size, # was creating unspecified problems...
         "creation_date": creation_date,
         "modification_date": modification_date,
         "hash": file_hash
@@ -52,7 +48,7 @@ def add_pymupdf_page_metadata(doc: Document, chunk_size: int = 1200, chunk_overl
     def split_text(text: str, chunk_size: int, chunk_overlap: int) -> List[Tuple[str, int]]:
         page_markers = [(m.start(), int(m.group(1))) for m in re.finditer(r'\[\[page(\d+)\]\]', text)]
         clean_text = re.sub(r'\[\[page\d+\]\]', '', text)
-        
+
         chunks = []
         start = 0
         while start < len(clean_text):
@@ -60,30 +56,30 @@ def add_pymupdf_page_metadata(doc: Document, chunk_size: int = 1200, chunk_overl
             if end > len(clean_text):
                 end = len(clean_text)
             chunk = clean_text[start:end].strip()
-            
+
             page_num = None
             for marker_pos, page in reversed(page_markers):
                 if marker_pos <= start:
                     page_num = page
                     break
-            
+
             if chunk and page_num is not None:
                 chunks.append((chunk, page_num))
             start += chunk_size - chunk_overlap
-        
+
         return chunks
 
     chunks = split_text(doc.page_content, chunk_size, chunk_overlap)
-    
+
     new_docs = []
     for chunk, page_num in chunks:
         new_metadata = doc.metadata.copy()
         new_metadata['page_number'] = page_num
-        
+
         new_doc = Document(
             page_content=chunk,
             metadata=new_metadata
         )
         new_docs.append(new_doc)
-    
+
     return new_docs

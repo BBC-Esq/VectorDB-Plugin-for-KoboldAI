@@ -14,7 +14,7 @@ model_downloaded_signal = ModelDownloadedSignal()
 
 MODEL_DIRECTORIES = {
     "vector": "vector",
-    "chat": "chat", 
+    "chat": "chat",
     "tts": "tts",
     "jeeves": "jeeves",
     "ocr": "ocr"
@@ -27,7 +27,7 @@ class ModelDownloader(QObject):
         self.model_type = model_type
         self._model_directory = None
         self.api = HfApi()
-        self.api.timeout = 60 # increase timeout
+        self.api.timeout = 60
         disable_progress_bars()
         self.local_dir = self.get_model_directory()
 
@@ -44,7 +44,7 @@ class ModelDownloader(QObject):
 
     def check_repo_type(self, repo_id):
         try:
-            repo_info = self.api.repo_info(repo_id, timeout=60) # increase timeout
+            repo_info = self.api.repo_info(repo_id, timeout=60)
             if repo_info.private:
                 return "private"
             elif getattr(repo_info, 'gated', False):
@@ -70,9 +70,6 @@ class ModelDownloader(QObject):
     def download_model(self, allow_patterns=None, ignore_patterns=None):
        repo_id = self.get_model_url()
 
-       # only download if repo is public
-       # https://huggingface.co/docs/hub/models-gated#access-gated-models-as-a-user
-       # https://huggingface.co/docs/hub/en/enterprise-hub-tokens-management
        repo_type = self.check_repo_type(repo_id)
        if repo_type != "public":
            if repo_type == "private":
@@ -92,12 +89,6 @@ class ModelDownloader(QObject):
 
        try:
            repo_files = list(self.api.list_repo_tree(repo_id, recursive=True))
-           """
-           allow_patterns: If provided, only matching files are downloaded (ignore_patterns is disregarded)
-           ignore_patterns: If provided alone, matching files are excluded
-           neither: Uses default ignore patterns (.gitattributes, READMEs, etc.) with smart model file filtering
-           both: Behaves same as allow_patterns only
-           """
            if allow_patterns is not None:
                final_ignore_patterns = None
            elif ignore_patterns is not None:
@@ -110,7 +101,7 @@ class ModelDownloader(QObject):
                    ".gitattributes",
                    "*.ckpt",
                    "*.gguf",
-                   "*.h5", 
+                   "*.h5",
                    "*.ot",
                    "*.md",
                    "README*",
@@ -160,7 +151,7 @@ class ModelDownloader(QObject):
                max_workers=4,
                ignore_patterns=final_ignore_patterns,
                allow_patterns=allow_patterns,
-               etag_timeout=60 # increase timeout
+               etag_timeout=60
            )
 
            print("\033[92mModel downloaded and ready to use.\033[0m")
@@ -172,39 +163,3 @@ class ModelDownloader(QObject):
            if local_dir.exists():
                import shutil
                shutil.rmtree(local_dir)
-
-"""
-Needs to be doublechecked...
-
-+----------------+------------------+------------------------+---------------+
-| Source         | Parameters       | Behavior             | Repo Structure? |
-+----------------+------------------+------------------------+---------------+
-| "huggingface"  | (default)        | ~/.cache/huggingface | No              |
-| "huggingface"  | cache_dir="path" | Downloads to path    | No              |
-| "huggingface"  | local_dir="path" | Downloads to path    | Yes             |
-+----------------+------------------+----------------------+-----------------+
-| "local"        | (default)        | Current directory    | No              |
-| "local"        | cache_dir="path" | Downloads to path    | No              |
-| "local"        | local_dir="path" | Downloads to path    | Yes             |
-+----------------+------------------+----------------------+-----------------+
-| "custom"       | custom_path      | Uses existing files  | n/a             |
-| "custom"       | +cache_dir       | cache_dir ignored    | n/a             |
-| "custom"       | +local_dir       | local_dir ignored    | n/a             |
-+----------------+------------------+----------------------+-----------------+
-
-1. `local_dir` takes precedence over everything else:
-```python
-chat.load(source="huggingface", local_dir="path/to/dir", cache_dir="path/to/cache")  # local_dir wins
-```
-
-2. If `local_dir` is not specified but `cache_dir` is, cache_dir is used:
-```python
-chat.load(source="huggingface", cache_dir="path/to/cache")  # cache_dir used
-```
-
-3. If neither is specified, the default location is used:
-```python
-chat.load(source="huggingface")  # Uses ~/.cache/huggingface
-chat.load(source="local")        # Uses current directory
-```
-"""
