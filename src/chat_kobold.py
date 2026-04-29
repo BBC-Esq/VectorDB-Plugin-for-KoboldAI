@@ -23,6 +23,61 @@ class KoboldSignals(QObject):
     finished_signal = Signal()
     citation_signal = Signal(str)
 
+
+class ThinkingTagFilter:
+    """Strip <think>...</think> blocks from a token stream incrementally.
+
+    Modern reasoning models (DeepSeek R1, Qwen3, GLM-4.5, GPT-OSS, etc.) emit
+    chain-of-thought wrapped in `<think>` tags through the native Kobold
+    `/api/extra/generate/stream` endpoint. We don't want to display that
+    reasoning to the end user. The OpenAI-compatible chat completions endpoint
+    splits this out into a separate `reasoning_content` field as of
+    KoboldCpp 1.111.2, but the native streaming endpoint we use here keeps it
+    inline -- so we filter it client-side.
+
+    Tags can straddle token boundaries, so the filter holds back any trailing
+    bytes that could be the start of a tag until enough text arrives to decide.
+    """
+
+    OPEN = "<think>"
+    CLOSE = "</think>"
+
+    def __init__(self):
+        self._buffer = ""
+        self._in_think = False
+
+    def feed(self, token: str) -> str:
+        self._buffer += token
+        out = []
+        while True:
+            if self._in_think:
+                idx = self._buffer.find(self.CLOSE)
+                if idx == -1:
+                    keep = max(0, len(self._buffer) - len(self.CLOSE) + 1)
+                    self._buffer = self._buffer[keep:]
+                    break
+                self._buffer = self._buffer[idx + len(self.CLOSE):]
+                self._in_think = False
+            else:
+                idx = self._buffer.find(self.OPEN)
+                if idx == -1:
+                    keep = max(0, len(self._buffer) - len(self.OPEN) + 1)
+                    out.append(self._buffer[:keep])
+                    self._buffer = self._buffer[keep:]
+                    break
+                out.append(self._buffer[:idx])
+                self._buffer = self._buffer[idx + len(self.OPEN):]
+                self._in_think = True
+        return "".join(out)
+
+    def flush(self) -> str:
+        if self._in_think:
+            self._buffer = ""
+            return ""
+        out = self._buffer
+        self._buffer = ""
+        return out
+
 class KoboldChat:
     def __init__(self):
         self.signals = KoboldSignals()
@@ -56,6 +111,7 @@ class KoboldChat:
 
             client = sseclient.SSEClient(response)
             full_response = ""
+            think_filter = ThinkingTagFilter()
 
             for event in client.events():
                 if event.event == "message":
@@ -64,15 +120,21 @@ class KoboldChat:
                         if 'token' in data:
                             token = data['token']
                             logging.debug(f"Received token: '{token}', finish_reason: {data.get('finish_reason')}")
-                            # Directly emit the signal
-                            self.signals.response_signal.emit(token)
-                            full_response += token
+                            visible = think_filter.feed(token)
+                            if visible:
+                                self.signals.response_signal.emit(visible)
+                                full_response += visible
                         else:
                             logging.warning(f"Event has no token: {data}")
                     except json.JSONDecodeError:
                         logging.error(f"Failed to parse JSON: {event.data}")
                 else:
                     logging.debug(f"Received non-message event: {event.event}")
+
+            tail = think_filter.flush()
+            if tail:
+                self.signals.response_signal.emit(tail)
+                full_response += tail
 
             return full_response
         except Exception as e:
