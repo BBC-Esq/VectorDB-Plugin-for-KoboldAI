@@ -18,9 +18,9 @@ from transformers import (
     LlamaTokenizer, LlavaForConditionalGeneration, BitsAndBytesConfig
 )
 
-from langchain_community.docstore.document import Document
+from db.document_processor import Document
 
-from extract_metadata import extract_image_metadata
+from core.extract_metadata import extract_image_metadata
 from core.utilities import my_cprint
 from core.constants import VISION_MODELS
 
