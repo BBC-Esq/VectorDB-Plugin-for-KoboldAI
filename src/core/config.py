@@ -3,11 +3,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
-from pydantic import BaseModel, Field, PrivateAttr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class DatabaseConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     chunk_size: int = Field(default=700, gt=0, le=100000)
     chunk_overlap: int = Field(default=250, ge=0, le=100000)
     contexts: int = Field(default=5, gt=0, le=1000)
@@ -42,6 +44,8 @@ class DatabaseConfig(BaseModel):
 
 
 class ComputeDeviceConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     available: List[str] = Field(default_factory=lambda: ["cpu"])
     database_creation: str = "cpu"
     database_query: str = "cpu"
