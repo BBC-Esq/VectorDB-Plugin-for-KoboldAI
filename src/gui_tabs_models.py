@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
    QWidget, QLabel, QGridLayout, QVBoxLayout, QGroupBox, QPushButton, QRadioButton, QButtonGroup
 )
 
-from constants import VECTOR_MODELS, TOOLTIPS
+from core.constants import VECTOR_MODELS, TOOLTIPS
 from download_model import ModelDownloader, model_downloaded_signal
 
 class VectorModelsTab(QWidget):

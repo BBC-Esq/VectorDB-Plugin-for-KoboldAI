@@ -8,7 +8,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QTreeView, QFileSystemModel, QMenu,
                                QGroupBox, QLabel, QComboBox, QMessageBox)
 
-from utilities import open_file
+from core.utilities import open_file
 
 class CustomFileSystemModel(QFileSystemModel):
     def __init__(self, parent=None):

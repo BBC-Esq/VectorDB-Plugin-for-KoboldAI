@@ -12,7 +12,7 @@ from langchain_community.docstore.document import Document
 import whisper_s2t
 from whisper_s2t.backends.ctranslate2.hf_utils import download_model
 from extract_metadata import extract_audio_metadata
-from constants import WHISPER_MODELS
+from core.constants import WHISPER_MODELS
 
 warnings.filterwarnings("ignore")
 

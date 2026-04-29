@@ -6,8 +6,8 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QFileDialog, QLabel, QComboBox, QSlider
 )
 from module_transcribe import WhisperTranscriber
-from utilities import my_cprint
-from constants import WHISPER_MODELS
+from core.utilities import my_cprint
+from core.constants import WHISPER_MODELS
 
 class TranscriberToolSettingsTab(QWidget):
     CONFIG_FILE = 'config.yaml'

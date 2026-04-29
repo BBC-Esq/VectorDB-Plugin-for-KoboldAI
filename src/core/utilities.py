@@ -379,7 +379,11 @@ def check_cuda_re_triton():
     print()
     logging.debug("CUDA file check completed")
 
-def get_model_native_precision(embedding_model_name, vector_models):
+def get_model_native_precision(embedding_model_name, vector_models=None):
+    if vector_models is None:
+        from core.constants import VECTOR_MODELS
+        vector_models = VECTOR_MODELS
+
     logging.debug(f"Looking for precision for model: {embedding_model_name}")
     model_name = os.path.basename(embedding_model_name)
     repo_style_name = model_name.replace('--', '/')
@@ -951,3 +955,117 @@ def prepare_long_path(base_path: str, filename: str) -> str:
         full_path = "\\\\?\\" + os.path.abspath(full_path)
 
     return full_path
+
+
+def normalize_text(text, preserve_whitespace=False):
+    import unicodedata
+
+    if text is None:
+        return None
+
+    if isinstance(text, (list, tuple)):
+        text = " ".join(str(item) for item in text if item is not None)
+
+    if not isinstance(text, str):
+        text = str(text)
+
+    text = unicodedata.normalize("NFKC", text)
+
+    INVISIBLE_CHARS = {
+        '­', '​', '‌', '‍', '‎', '‏',
+        '⁠', '⁡', '⁢', '⁣', '⁤', '﻿',
+    }
+
+    cleaned = []
+    for char in text:
+        code = ord(char)
+        if char == '\n' or char == '\t':
+            if preserve_whitespace:
+                cleaned.append(char)
+            else:
+                cleaned.append(' ')
+        elif char == '\r':
+            cleaned.append(' ')
+        elif code < 32:
+            continue
+        elif code == 127:
+            continue
+        elif code > 65535:
+            continue
+        elif char in INVISIBLE_CHARS:
+            continue
+        elif 128 <= code <= 159:
+            continue
+        elif code == 65533:
+            continue
+        elif 57344 <= code <= 63743:
+            continue
+        else:
+            cleaned.append(char)
+
+    result = "".join(cleaned)
+
+    if preserve_whitespace:
+        result = re.sub(r'[^\S\n\t]+', ' ', result)
+        result = re.sub(r' *\n *', '\n', result)
+        result = re.sub(r'\n{3,}', '\n\n', result)
+    else:
+        result = " ".join(result.split())
+
+    result = result.strip()
+    return result if result else None
+
+
+def get_embedding_batch_size(model_name: str, compute_device: str) -> int:
+    if compute_device.lower() == 'cpu':
+        return 2
+
+    batch_size_mapping = {
+        'stella_en_1.5B': 4,
+        'e5-large': 7,
+        'arctic-embed-l': 7,
+        'e5-base': 6,
+        'bge-large-en-v1.5': 6,
+        'bge-base-en-v1.5': 8,
+        'e5-small': 10,
+        'gte-large': 12,
+        'Granite-30m-English': 12,
+        'bge-small': 12,
+        'bge-small-en-v1.5': 12,
+        'gte-base': 14,
+        'arctic-embed-m': 14,
+        'stella_en_400M_v5': 20,
+    }
+
+    model_name_lower = model_name.lower()
+    for key, value in batch_size_mapping.items():
+        if key.lower() in model_name_lower:
+            return value
+
+    return 8
+
+
+def get_embedding_dtype_and_batch(
+    compute_device: str,
+    use_half: bool,
+    model_native_precision: str,
+    model_name: str,
+    is_query: bool,
+):
+    dtype = get_appropriate_dtype(compute_device, use_half, model_native_precision)
+    batch = 1 if is_query else get_embedding_batch_size(model_name, compute_device)
+    return dtype, batch
+
+
+def configure_logging(level: str = "INFO"):
+    root = logging.getLogger()
+    if root.handlers:
+        root.setLevel(level.upper())
+        return
+    root.setLevel(level.upper())
+    h = logging.StreamHandler()
+    fmt = logging.Formatter(
+        "%(asctime)s %(levelname)s [%(name)s] %(message)s"
+    )
+    h.setFormatter(fmt)
+    root.addHandler(h)

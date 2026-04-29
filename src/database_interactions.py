@@ -24,8 +24,8 @@ from langchain_community.vectorstores import TileDB
 
 from document_processor import load_documents, split_documents
 from module_process_images import choose_image_loader
-from utilities import my_cprint, get_model_native_precision, get_appropriate_dtype, supports_flash_attention
-from constants import VECTOR_MODELS
+from core.utilities import my_cprint, get_model_native_precision, get_appropriate_dtype, supports_flash_attention
+from core.constants import VECTOR_MODELS
 
 logging.basicConfig(level=logging.CRITICAL, force=True)
 logger = logging.getLogger(__name__)

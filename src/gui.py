@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 )
 from initialize import main as initialize_system
 from gui_tabs import create_tabs
-from utilities import list_theme_files, make_theme_changer, load_stylesheet
+from core.utilities import list_theme_files, make_theme_changer, load_stylesheet
 
 try:
     with open('test_write.txt', 'w') as f:

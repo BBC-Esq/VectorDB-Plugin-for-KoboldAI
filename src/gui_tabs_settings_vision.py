@@ -3,7 +3,7 @@ from pathlib import Path
 import torch
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QGridLayout, QVBoxLayout, QComboBox, QWidget
-from constants import VISION_MODELS
+from core.constants import VISION_MODELS
 
 def is_cuda_available():
     return torch.cuda.is_available()

@@ -31,7 +31,7 @@ from langchain_community.document_loaders.blob_loaders import Blob
 from langchain_community.document_loaders.parsers import PyMuPDFParser
 import pymupdf
 
-from constants import DOCUMENT_LOADERS
+from core.constants import DOCUMENT_LOADERS
 from extract_metadata import extract_document_metadata, add_pymupdf_page_metadata
 
 logging.basicConfig(

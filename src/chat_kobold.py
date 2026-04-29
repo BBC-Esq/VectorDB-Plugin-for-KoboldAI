@@ -9,8 +9,8 @@ import sseclient
 from PySide6.QtCore import QThread, Signal, QObject
 
 from database_interactions import QueryVectorDB
-from utilities import format_citations, normalize_chat_text
-from constants import rag_string
+from core.utilities import format_citations, normalize_chat_text
+from core.constants import rag_string
 
 ROOT_DIRECTORY = Path(__file__).resolve().parent
 
