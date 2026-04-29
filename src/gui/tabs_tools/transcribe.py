@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QFileDialog, QLabel, QComboBox, QSlider
 )
-from module_transcribe import WhisperTranscriber
+from modules.transcribe import WhisperTranscriber
 from core.utilities import my_cprint
 from core.constants import WHISPER_MODELS
 

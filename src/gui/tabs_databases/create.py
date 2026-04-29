@@ -11,9 +11,9 @@ from PySide6.QtWidgets import (QWidget, QPushButton, QVBoxLayout, QHBoxLayout, Q
                                QMenu, QGroupBox, QLineEdit, QGridLayout, QSizePolicy, QComboBox)
 
 from db.database_interactions import create_vector_db_in_process
-from choose_documents_and_vector_model import choose_documents_directory
+from db.choose_documents import choose_documents_directory
 from core.utilities import check_preconditions_for_db_creation, open_file, delete_file, backup_database_incremental, my_cprint
-from download_model import model_downloaded_signal
+from gui.download_model import model_downloaded_signal
 from core.constants import TOOLTIPS
 
 class CreateDatabaseProcess:

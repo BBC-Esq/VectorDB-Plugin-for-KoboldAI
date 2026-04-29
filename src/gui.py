@@ -11,8 +11,8 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QTabWidget,
     QStyleFactory, QMenuBar
 )
-from initialize import main as initialize_system
-from gui_tabs import create_tabs
+from core.initialize import main as initialize_system
+from gui.tabs import create_tabs
 from core.utilities import list_theme_files, make_theme_changer, load_stylesheet
 
 try:

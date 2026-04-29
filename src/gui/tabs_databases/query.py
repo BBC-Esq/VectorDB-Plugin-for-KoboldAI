@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QTextEdit, QPushButton, QHBo
 import multiprocessing
 from db.database_interactions import process_chunks_only_query
 from core.utilities import check_preconditions_for_submit_question
-from chat_kobold import KoboldChat, KoboldThread
+from chat.kobold import KoboldChat, KoboldThread
 
 logging.basicConfig(
     level=logging.DEBUG,
