@@ -298,6 +298,7 @@ libs = [
     "xxhash==3.6.0",
     "yarl==1.22.0",
     "zipp==3.23.0",
+    "zstandard==0.25.0",
 ]
 
 full_install_libs = [
