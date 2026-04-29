@@ -1,5 +1,6 @@
 # --- Local-only working folder (release notes, kobold reference clone, etc.) ---
 DEVELOPMENT/
+TESTS/
 
 # --- Python venv (when created inside src/) ---
 src/.lock
