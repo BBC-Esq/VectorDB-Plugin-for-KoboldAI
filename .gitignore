@@ -2,7 +2,13 @@
 DEVELOPMENT/
 TESTS/
 
-# --- Python venv (when created inside src/) ---
+# --- Python venv (root or src/) ---
+/.lock
+/pyvenv.cfg
+/Include/
+/Lib/
+/Scripts/
+/share/
 src/.lock
 src/pyvenv.cfg
 src/Include/
