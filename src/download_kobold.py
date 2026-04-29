@@ -148,7 +148,7 @@ class MainWindow(QMainWindow):
 
         self.file_combobox = QComboBox()
         self.file_combobox.addItems(download_links.keys())
-        self.file_combobox.setCurrentText("koboldcpp_nocuda.exe")
+        self.file_combobox.setCurrentText("koboldcpp-nocuda.exe")
         download_layout.addWidget(self.file_combobox)
 
         self.download_button = QPushButton("Download")
@@ -164,12 +164,12 @@ class MainWindow(QMainWindow):
         if avx2_supported:
             self.avx2_label.setText("AVX2 instruction set detected.")
         else:
-            self.avx2_label.setText("The AVX2 instruction set is not detected. You must use 'koboldcpp_oldcpu.exe'.")
+            self.avx2_label.setText("The AVX2 instruction set is not detected. You must use 'koboldcpp-oldpc.exe'.")
 
         if nvidia_gpu_detected:
             self.gpu_label.setText("Nvidia GPU detected.")
         else:
-            self.gpu_label.setText("No Nvidia GPU detected. You cannot use 'koboldcpp.exe' nor 'koboldcpp_cu12.exe'.")
+            self.gpu_label.setText("No Nvidia GPU detected. Use 'koboldcpp-nocuda.exe' (Vulkan/CPU) instead of 'koboldcpp.exe'.")
 
         cuda_devices, vulkan_devices, vulkan_is_dgpu = get_gpu_info()
 
@@ -200,13 +200,13 @@ class MainWindow(QMainWindow):
             grid_layout.addWidget(QLabel(binary), row, 0)
             
             avx2_checkbox = QCheckBox()
-            avx2_checkbox.setChecked(binary != "koboldcpp_oldcpu.exe")
+            avx2_checkbox.setChecked(binary != "koboldcpp-oldpc.exe")
             avx2_checkbox.setAttribute(Qt.WA_TransparentForMouseEvents)
             avx2_checkbox.setFocusPolicy(Qt.NoFocus)
             grid_layout.addWidget(avx2_checkbox, row, 1, Qt.AlignCenter)
-            
+
             cuda_checkbox = QCheckBox()
-            cuda_checkbox.setChecked(binary != "koboldcpp_nocuda.exe")
+            cuda_checkbox.setChecked(binary == "koboldcpp.exe")
             cuda_checkbox.setAttribute(Qt.WA_TransparentForMouseEvents)
             cuda_checkbox.setFocusPolicy(Qt.NoFocus)
             grid_layout.addWidget(cuda_checkbox, row, 2, Qt.AlignCenter)
@@ -236,11 +236,13 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         QMessageBox.critical(self, "Error", f"An error occurred while downloading the file: {error_message}")
 
+# Asset names changed in koboldcpp v1.94.2 (June 2025): old `koboldcpp_cu12.exe`,
+# `koboldcpp_oldcpu.exe`, and `koboldcpp_nocuda.exe` were removed. The CUDA build is
+# now bundled into `koboldcpp.exe`; underscores became hyphens for the others.
 download_links = {
     "koboldcpp.exe": "https://github.com/LostRuins/koboldcpp/releases/latest/download/koboldcpp.exe",
-    "koboldcpp_cu12.exe": "https://github.com/LostRuins/koboldcpp/releases/latest/download/koboldcpp_cu12.exe",
-    "koboldcpp_oldcpu.exe": "https://github.com/LostRuins/koboldcpp/releases/latest/download/koboldcpp_oldcpu.exe",
-    "koboldcpp_nocuda.exe": "https://github.com/LostRuins/koboldcpp/releases/latest/download/koboldcpp_nocuda.exe"
+    "koboldcpp-nocuda.exe": "https://github.com/LostRuins/koboldcpp/releases/latest/download/koboldcpp-nocuda.exe",
+    "koboldcpp-oldpc.exe": "https://github.com/LostRuins/koboldcpp/releases/latest/download/koboldcpp-oldpc.exe",
 }
 
 if __name__ == "__main__":

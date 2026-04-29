@@ -190,8 +190,8 @@ def download_kobold_executable():
     import requests
     from pathlib import Path
 
-    file_name = "koboldcpp_nocuda.exe"
-    url = f"https://github.com/LostRuins/koboldcpp/releases/download/v1.82.4/{file_name}"
+    file_name = "koboldcpp-nocuda.exe"
+    url = f"https://github.com/LostRuins/koboldcpp/releases/latest/download/{file_name}"
 
     script_dir = Path(__file__).parent
     assets_dir = script_dir / "Assets"
