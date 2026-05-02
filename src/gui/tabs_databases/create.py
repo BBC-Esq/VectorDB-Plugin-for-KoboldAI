@@ -14,7 +14,7 @@ from db.database_interactions import create_vector_db_in_process
 from db.choose_documents import choose_documents_directory
 from core.utilities import check_preconditions_for_db_creation, open_file, delete_file, backup_database_incremental, my_cprint
 from gui.download_model import model_downloaded_signal
-from core.constants import TOOLTIPS
+from core.constants import TOOLTIPS, PROJECT_ROOT
 
 class CreateDatabaseProcess:
     def __init__(self, database_name, parent=None):
@@ -240,7 +240,7 @@ class DatabasesTab(QWidget):
         tree_view.setModel(model)
         tree_view.setSelectionMode(QTreeView.ExtendedSelection)
 
-        script_dir = Path(__file__).resolve().parent
+        script_dir = PROJECT_ROOT
         directory_path = script_dir / directory_name
         model.setRootPath(str(directory_path))
         tree_view.setRootIndex(model.index(str(directory_path)))
