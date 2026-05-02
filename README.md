@@ -16,16 +16,6 @@
 6) Build Tools.
    > Some dependencies don't ship pre-compiled "wheels" so you must be able to build them with [Microsoft Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) and/or [Visual Studio](https://visualstudio.microsoft.com/). Visual Studio is recommended — make sure to select the "Desktop development with C++" workload and check the four boxes on the right that contain "SDK."
 
-   <details>
-     <summary>EXAMPLE ERROR ON WINDOWS</summary>
-     <img src="https://github.com/BBC-Esq/ChromaDB-Plugin-for-LM-Studio/raw/main/sample_error.png">
-   </details>
-
-   <details>
-     <summary>EXAMPLE SOLUTION ON WINDOWS</summary>
-     <img src="https://github.com/BBC-Esq/ChromaDB-Plugin-for-LM-Studio/raw/main/build_tools.png">
-   </details>
-
 <div align="center"> <h1>INSTALLATION</h1></div>
 
 ### Step 1
