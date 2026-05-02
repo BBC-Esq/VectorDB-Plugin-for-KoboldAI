@@ -1,20 +1,142 @@
-import json
+import sys
 import textwrap
-import multiprocessing
+import subprocess
 from pathlib import Path
 import logging
 import yaml
+import tempfile
 import os
 import traceback
-from PySide6.QtCore import Qt, QThread, Signal as pyqtSignal
-from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QFileDialog, QHBoxLayout, QMessageBox
+import gc
+import time
+from PIL import Image
+import torch
+from PySide6.QtCore import QThread, Signal as pyqtSignal, Qt
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QMessageBox,
+    QFileDialog, QProgressDialog, QDialog, QCheckBox,
+    QListWidget, QListWidgetItem, QLabel
+)
 
+import modules.process_images as module_process_images
 from modules.process_images import choose_image_loader
+from core.constants import VISION_MODELS
 
 CONFIG_FILE = 'config.yaml'
 
-logging.basicConfig(level=logging.DEBUG)
+
+def _load_cfg() -> dict:
+    p = Path(CONFIG_FILE)
+    if not p.exists():
+        return {}
+    try:
+        with p.open('r', encoding='utf-8') as f:
+            return yaml.safe_load(f) or {}
+    except Exception:
+        return {}
+
+
+class ModelComparisonProgressDialog(QDialog):
+    PENDING = "⏸"     # ⏸
+    RUNNING = "⏳"     # ⏳
+    SUCCESS = "✅"     # ✅
+    FAILED = "❌"      # ❌
+
+    def __init__(self, model_names, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Vision Model Comparison")
+        self.setModal(True)
+        self.setMinimumWidth(420)
+        self._was_cancelled = False
+        self._finished = False
+
+        layout = QVBoxLayout(self)
+
+        self.header_label = QLabel(
+            f"Processing image with {len(model_names)} selected model(s)..."
+        )
+        layout.addWidget(self.header_label)
+
+        self.list_widget = QListWidget()
+        self.list_widget.setSelectionMode(QListWidget.NoSelection)
+        self.list_widget.setFocusPolicy(Qt.NoFocus)
+        for name in model_names:
+            item = QListWidgetItem(f"{self.PENDING}  {name}")
+            self.list_widget.addItem(item)
+        layout.addWidget(self.list_widget)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        self.action_button = QPushButton("Cancel")
+        self.action_button.clicked.connect(self._on_action_clicked)
+        button_row.addWidget(self.action_button)
+        layout.addLayout(button_row)
+
+        self._model_names = list(model_names)
+
+    def _set_row(self, index, icon, suffix=""):
+        if 0 <= index < len(self._model_names):
+            text = f"{icon}  {self._model_names[index]}"
+            if suffix:
+                text += f"   {suffix}"
+            self.list_widget.item(index).setText(text)
+
+    def on_model_started(self, index, name):
+        self._set_row(index, self.RUNNING, "processing…")
+
+    def on_model_completed(self, index, name, elapsed):
+        self._set_row(index, self.SUCCESS, f"({elapsed:.1f} s)")
+
+    def on_model_failed(self, index, name):
+        self._set_row(index, self.FAILED)
+
+    def mark_finished(self):
+        self._finished = True
+        self.action_button.setText("Close")
+        self.header_label.setText("Done. See the comparison output file for details.")
+
+    def was_cancelled(self):
+        return self._was_cancelled
+
+    def _on_action_clicked(self):
+        if not self._finished:
+            self._was_cancelled = True
+        self.close()
+
+    def closeEvent(self, event):
+        if not self._finished:
+            self._was_cancelled = True
+        super().closeEvent(event)
+
+
+class ModelSelectionDialog(QDialog):
+    def __init__(self, models, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Vision Models")
+        layout = QVBoxLayout()
+
+        self.checkboxes = {}
+        for model_name, info in models.items():
+            vram_text = info.get('vram', '—')
+            checkbox = QCheckBox(f"{model_name} (VRAM: {vram_text})")
+            checkbox.setChecked(True)
+            self.checkboxes[model_name] = checkbox
+            layout.addWidget(checkbox)
+
+        buttons_layout = QHBoxLayout()
+        ok_button = QPushButton("OK")
+        cancel_button = QPushButton("Cancel")
+        ok_button.clicked.connect(self.accept)
+        cancel_button.clicked.connect(self.reject)
+        buttons_layout.addWidget(ok_button)
+        buttons_layout.addWidget(cancel_button)
+
+        layout.addLayout(buttons_layout)
+        self.setLayout(layout)
+
+    def get_selected_models(self):
+        return [model for model, checkbox in self.checkboxes.items() if checkbox.isChecked()]
+
 
 class ImageProcessorThread(QThread):
     finished = pyqtSignal(list)
@@ -22,11 +144,104 @@ class ImageProcessorThread(QThread):
 
     def run(self):
         try:
-            documents = choose_image_loader()
+            cfg = _load_cfg()
+            chosen_model = ((cfg.get('vision') or {}).get('chosen_model')
+                            or next(iter(VISION_MODELS.keys())))
+            print(f"[Tools] Using chosen_model from config: {chosen_model}")
+
+            documents = None
+            try:
+                documents = choose_image_loader({"vision": {"chosen_model": chosen_model}})
+            except TypeError:
+                try:
+                    module_process_images.DEFAULT_VISION_MODEL_OVERRIDE = chosen_model
+                    print("[Tools] Set module_process_images.DEFAULT_VISION_MODEL_OVERRIDE")
+                except Exception:
+                    pass
+                documents = choose_image_loader()
+
             self.finished.emit(documents)
         except Exception as e:
             error_msg = f"Error in image processing: {str(e)}\n{traceback.format_exc()}"
             self.error.emit(error_msg)
+
+
+class MultiModelProcessorThread(QThread):
+    finished = pyqtSignal(list)
+    error = pyqtSignal(str)
+    progress = pyqtSignal(int)
+    model_started = pyqtSignal(int, str)
+    model_completed = pyqtSignal(int, str, float)
+    model_failed = pyqtSignal(int, str)
+
+    def __init__(self, image_path, selected_models):
+        super().__init__()
+        self.image_path = image_path
+        self.selected_models = selected_models
+        self.is_cancelled = False
+
+    def cancel(self):
+        self.is_cancelled = True
+
+    def run(self):
+        try:
+            results = []
+            with Image.open(self.image_path) as raw_image:
+                for i, model_name in enumerate(self.selected_models):
+                    if self.is_cancelled:
+                        print("\nProcessing cancelled by user")
+                        torch.cuda.empty_cache()
+                        gc.collect()
+                        break
+
+                    self.model_started.emit(i, model_name)
+
+                    try:
+                        print(f"\nProcessing with {model_name}...")
+                        model_config = {"vision": {"chosen_model": model_name}}
+
+                        loader_name = VISION_MODELS[model_name]['loader']
+                        loader_class = getattr(module_process_images, loader_name)
+                        loader = loader_class(model_config)
+
+                        loader.model, loader.tokenizer, loader.processor = loader.initialize_model_and_tokenizer()
+                        start_time = time.time()
+                        description = loader.process_single_image(raw_image)
+                        process_time = time.time() - start_time
+                        description = textwrap.fill(description, width=10)
+                        results.append((model_name, description, process_time))
+
+                        if hasattr(loader, 'model') and loader.model is not None:
+                            loader.model.cpu()
+                            del loader.model
+                        if hasattr(loader, 'tokenizer') and loader.tokenizer is not None:
+                            del loader.tokenizer
+                        if hasattr(loader, 'processor') and loader.processor is not None:
+                            del loader.processor
+
+                        torch.cuda.empty_cache()
+                        gc.collect()
+
+                        print(f"Completed {model_name}")
+                        self.progress.emit(i + 1)
+                        self.model_completed.emit(i, model_name, process_time)
+
+                    except Exception as e:
+                        error_msg = f"Error processing with {model_name}: {str(e)}\n{traceback.format_exc()}"
+                        results.append((model_name, error_msg, 0.0))
+                        print(error_msg)
+                        torch.cuda.empty_cache()
+                        gc.collect()
+                        self.model_failed.emit(i, model_name)
+
+            torch.cuda.empty_cache()
+            gc.collect()
+            self.finished.emit(results)
+        except Exception as e:
+            torch.cuda.empty_cache()
+            gc.collect()
+            self.error.emit(str(e))
+
 
 class VisionToolSettingsTab(QWidget):
     def __init__(self):
@@ -38,11 +253,16 @@ class VisionToolSettingsTab(QWidget):
         hBoxLayout = QHBoxLayout()
         mainVLayout.addLayout(hBoxLayout)
 
-        processButton = QPushButton("Process")
+        processButton = QPushButton("Multiple Files + One Vision Model")
         hBoxLayout.addWidget(processButton)
         processButton.clicked.connect(self.confirmationBeforeProcessing)
 
+        newButton = QPushButton("Single Image + All Vision Models")
+        hBoxLayout.addWidget(newButton)
+        newButton.clicked.connect(self.selectSingleImage)
+
         self.thread = None
+        self.progress = None
 
     def confirmationBeforeProcessing(self):
         msgBox = QMessageBox()
@@ -53,7 +273,7 @@ class VisionToolSettingsTab(QWidget):
             "2. Settings Tab:\n"
             "Select the vision model you want to test.\n\n"
             "3. Click the 'Process' button.\n\n"
-            "This will test the selected vison model before actually entering the images into the vector database.\n\n"
+            "This will test the selected vision model before actually entering the images into the vector database.\n\n"
             "Do you want to proceed?"
         )
         msgBox.setWindowTitle("Confirm Processing")
@@ -61,7 +281,7 @@ class VisionToolSettingsTab(QWidget):
         returnValue = msgBox.exec()
         if returnValue == QMessageBox.Ok:
             self.startProcessing()
-    
+
     def startProcessing(self):
         if self.thread is None:
             self.thread = ImageProcessorThread()
@@ -71,7 +291,7 @@ class VisionToolSettingsTab(QWidget):
 
     def onProcessingFinished(self, documents):
         self.thread = None
-        logging.info(f"Processed {len(documents)} documents")
+        print(f"Processed {len(documents)} documents")
         contents = self.extract_page_content(documents)
         self.save_page_contents(contents)
 
@@ -80,52 +300,174 @@ class VisionToolSettingsTab(QWidget):
         logging.error(f"Processing error: {error_msg}")
         QMessageBox.critical(self, "Processing Error", f"An error occurred during image processing:\n\n{error_msg}")
 
+    def selectSingleImage(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Image File",
+            "",
+            "Image Files (*.png *.jpg *.jpeg *.gif *.bmp *.tif *.tiff)"
+        )
+        if file_path:
+            dialog = ModelSelectionDialog(VISION_MODELS, self)
+            if dialog.exec():
+                selected_models = dialog.get_selected_models()
+                if not selected_models:
+                    QMessageBox.warning(self, "Warning", "Please select at least one model.")
+                    return
+
+                msgBox = QMessageBox()
+                msgBox.setIcon(QMessageBox.Information)
+                msgBox.setText(
+                    "Process this image with the selected vision models?\n\n"
+                    "This will test each model sequentially and may take several minutes.\n"
+                    "Models will be loaded and unloaded to manage memory usage.\n\n"
+                    "Do you want to proceed?"
+                )
+                msgBox.setWindowTitle("Confirm Processing")
+                msgBox.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+                returnValue = msgBox.exec()
+
+                if returnValue == QMessageBox.Ok:
+                    self.progress = ModelComparisonProgressDialog(selected_models, self)
+                    self.progress.rejected.connect(self.cancelProcessing)
+
+                    self.thread = MultiModelProcessorThread(file_path, selected_models)
+                    self.thread.finished.connect(self.onMultiModelProcessingFinished)
+                    self.thread.error.connect(self.onMultiModelProcessingError)
+                    self.thread.model_started.connect(self.progress.on_model_started)
+                    self.thread.model_completed.connect(self.progress.on_model_completed)
+                    self.thread.model_failed.connect(self.progress.on_model_failed)
+                    self.thread.start()
+
+                    self.progress.show()
+
+    def cancelProcessing(self):
+        if self.thread is not None and hasattr(self.thread, "cancel"):
+            self.thread.cancel()
+
+    def onMultiModelProcessingFinished(self, results):
+        if self.progress:
+            self.progress.mark_finished()
+        try:
+            output_file = self.save_comparison_results(self.thread.image_path, results)
+            self.open_file(output_file)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An error occurred while saving results:\n\n{str(e)}")
+        self.thread = None
+
+    def onMultiModelProcessingError(self, error_msg):
+        if self.progress:
+            self.progress.mark_finished()
+            self.progress.close()
+        QMessageBox.critical(self, "Error", f"An error occurred during processing:\n\n{error_msg}")
+        self.thread = None
+
     def extract_page_content(self, documents):
         contents = []
+        total_length = 0
+
         for doc in documents:
             if hasattr(doc, 'page_content') and hasattr(doc, 'metadata'):
                 content = doc.page_content
-                filename = doc.metadata.get('file_name', 'Unknown filename')
+                filepath = doc.metadata.get('source', doc.metadata.get('file_path', doc.metadata.get('file_name', 'Unknown filepath')))
             elif isinstance(doc, dict):
                 content = doc.get("page_content", "Document is missing 'page_content'.")
-                filename = doc.get("metadata", {}).get('file_name', 'Unknown filename')
+                filepath = doc.get("metadata", {}).get('source',
+                         doc.get("metadata", {}).get('file_path',
+                         doc.get("metadata", {}).get('file_name', 'Unknown filepath')))
             else:
                 content = "Document is missing 'page_content'."
-                filename = 'Unknown filename'
+                filepath = 'Unknown filepath'
 
+            content_length = len(content)
+            total_length += content_length
             wrapped_content = textwrap.fill(content, width=100)
-            contents.append((filename, wrapped_content))
-        
-        return contents
+            contents.append((filepath, wrapped_content, content_length))
+
+        avg_length = total_length / len(documents) if documents else 0
+        return contents, avg_length
 
     def save_page_contents(self, contents):
-        script_dir = Path(__file__).resolve().parent
-        output_file = script_dir / "sample_vision_summaries.txt"
-        
-        with open(output_file, 'w', encoding='utf-8') as file:
-            for filename, content in contents:
-                file.write(f"{filename}\n\n")
-                file.write(f"{content}\n\n")
+        contents, avg_length = contents
 
-        logging.info(f"Saved vision summaries to {output_file}")
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', encoding='utf-8', delete=False) as temp_file:
+            temp_file.write(f"Average Summary Length: {avg_length:.2f} characters\n")
+            temp_file.write("="*50 + "\n\n")
 
-        self.open_file(output_file)
+            for filepath, content, length in contents:
+                temp_file.write(f"File Path: {filepath}\n")
+                temp_file.write(f"Summary Length: {length} characters\n")
+                temp_file.write("-"*50 + "\n")
+                temp_file.write(f"{content}\n\n")
+                temp_file.write("="*50 + "\n\n")
+
+            temp_name = temp_file.name
+
+        self.open_file(temp_name)
+
+    def save_comparison_results(self, image_path, results):
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', encoding='utf-8', delete=False) as temp_file:
+            model_col_width = 23
+            count_col_width = 12
+            time_col_width = 12
+            speed_col_width = 12
+
+            temp_file.write(f"Image Path: {image_path}\n")
+            temp_file.write(f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+
+            chunk_advice = (
+                "Remember to adjust your 'chunk size' setting to exceed the longest image summary that you expect. "
+                "For large bodies of text (e.g. from a .pdf) splitting/overlapping chunks of text is fine, but for image "
+                "summaries you want any/all summaries to fit within a single chunk that will be put into the vector database."
+            )
+            temp_file.write(textwrap.fill(chunk_advice, width=100) + "\n\n")
+
+            temp_file.write("Model Performance Comparison Table:\n")
+            temp_file.write("+" + "-"*model_col_width + "+" + "-"*count_col_width + "+" +
+                           "-"*time_col_width + "+" + "-"*speed_col_width + "+\n")
+            temp_file.write("|" + "Model Name".center(model_col_width) + "|" +
+                           "Char Count".center(count_col_width) + "|" +
+                           "Time (sec)".center(time_col_width) + "|" +
+                           "Char/Sec".center(speed_col_width) + "|\n")
+            temp_file.write("+" + "-"*model_col_width + "+" + "-"*count_col_width + "+" +
+                           "-"*time_col_width + "+" + "-"*speed_col_width + "+\n")
+
+            for model_name, description, process_time in results:
+                char_count = len(description)
+                chars_per_sec = char_count / process_time if process_time > 0 else 0
+
+                temp_file.write("|" + model_name.ljust(model_col_width) + "|" +
+                              str(char_count).center(count_col_width) + "|" +
+                              f"{process_time:.2f}".center(time_col_width) + "|" +
+                              f"{chars_per_sec:.1f}".center(speed_col_width) + "|\n")
+
+            temp_file.write("+" + "-"*model_col_width + "+" + "-"*count_col_width + "+" +
+                           "-"*time_col_width + "+" + "-"*speed_col_width + "+\n\n")
+
+            for model_name, description, process_time in results:
+                char_count = len(description)
+                chars_per_sec = char_count / process_time if process_time > 0 else 0
+
+                temp_file.write(f"Model: {model_name}\n")
+                temp_file.write(f"Summary Length: {char_count}\n")
+                temp_file.write(f"Processing Time: {process_time:.2f} seconds\n")
+                temp_file.write(f"Characters per Second: {chars_per_sec:.1f}\n")
+                temp_file.write("="*50 + "\n")
+                if description.strip():
+                    temp_file.write(textwrap.fill(description, width=100) + "\n\n")
+                else:
+                    temp_file.write("[No output generated]\n\n")
+                temp_file.write("-"*50 + "\n\n")
+
+            temp_name = temp_file.name
+
+        self.open_file(temp_name)
+        return temp_name
 
     def open_file(self, file_path):
         try:
-            if os.name == 'nt':
-                os.startfile(file_path)
-            elif sys.platform == 'darwin':
-                subprocess.Popen(['open', file_path])
-            elif sys.platform.startswith('linux'):
-                subprocess.Popen(['xdg-open', file_path])
-            else:
-                raise NotImplementedError("Unsupported operating system")
-            logging.info(f"Opened file: {file_path}")
+            os.startfile(file_path)
         except Exception as e:
             error_msg = f"Error opening file: {e}"
             logging.error(error_msg)
             QMessageBox.warning(self, "Error", error_msg)
-
-if __name__ == "__main__":
-    pass
