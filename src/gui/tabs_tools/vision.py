@@ -255,7 +255,7 @@ class VisionToolSettingsTab(QWidget):
 
         processButton = QPushButton("Multiple Files + One Vision Model")
         hBoxLayout.addWidget(processButton)
-        processButton.clicked.connect(self.confirmationBeforeProcessing)
+        processButton.clicked.connect(self.startProcessing)
 
         newButton = QPushButton("Single Image + All Vision Models")
         hBoxLayout.addWidget(newButton)
@@ -263,24 +263,6 @@ class VisionToolSettingsTab(QWidget):
 
         self.thread = None
         self.progress = None
-
-    def confirmationBeforeProcessing(self):
-        msgBox = QMessageBox()
-        msgBox.setIcon(QMessageBox.Information)
-        msgBox.setText(
-            "1. Create Database Tab:\n"
-            "Select files you theoretically want in the vector database.\n\n"
-            "2. Settings Tab:\n"
-            "Select the vision model you want to test.\n\n"
-            "3. Click the 'Process' button.\n\n"
-            "This will test the selected vision model before actually entering the images into the vector database.\n\n"
-            "Do you want to proceed?"
-        )
-        msgBox.setWindowTitle("Confirm Processing")
-        msgBox.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
-        returnValue = msgBox.exec()
-        if returnValue == QMessageBox.Ok:
-            self.startProcessing()
 
     def startProcessing(self):
         if self.thread is None:
