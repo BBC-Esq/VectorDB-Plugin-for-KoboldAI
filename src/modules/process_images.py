@@ -65,7 +65,7 @@ def run_loader_in_process(loader_func):
         return []
 
 
-def choose_image_loader(model_config: dict | None = None):
+def choose_image_loader(model_config: dict | None = None, return_timing: bool = False):
     if model_config is None:
         cfg_path = Path('config.yaml')
         if not cfg_path.exists():
@@ -87,16 +87,23 @@ def choose_image_loader(model_config: dict | None = None):
 
     image_dir = PROJECT_ROOT / "Docs_for_DB"
     if not check_for_images(image_dir):
-        return []
+        return ([], 0.0) if return_timing else []
 
     with ProcessPoolExecutor(1, initializer=set_cuda_paths) as executor:
         future = executor.submit(run_loader_in_process, loader.process_images)
         try:
-            processed_docs = future.result()
+            result = future.result()
         except Exception as e:
             my_cprint(f"Error occurred during image processing: {e}", "red")
-            return []
-        return processed_docs or []
+            return ([], 0.0) if return_timing else []
+
+        if isinstance(result, tuple) and len(result) == 2:
+            processed_docs, processing_time = result
+        else:
+            processed_docs, processing_time = (result or []), 0.0
+
+        processed_docs = processed_docs or []
+        return (processed_docs, processing_time) if return_timing else processed_docs
 
 
 class BaseLoader:
@@ -146,7 +153,7 @@ class BaseLoader:
         print(f"Loaded {len(documents)} image(s).")
         print(f"Total image processing time: {total_time:.2f} seconds")
         my_cprint("Vision model removed from memory.", "red")
-        return documents
+        return documents, total_time
 
     def process_single_image(self, raw_image):
         raise NotImplementedError

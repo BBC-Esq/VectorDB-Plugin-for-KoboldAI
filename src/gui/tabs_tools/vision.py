@@ -139,7 +139,7 @@ class ModelSelectionDialog(QDialog):
 
 
 class ImageProcessorThread(QThread):
-    finished = pyqtSignal(list)
+    finished = pyqtSignal(list, float)
     error = pyqtSignal(str)
 
     def run(self):
@@ -149,18 +149,11 @@ class ImageProcessorThread(QThread):
                             or next(iter(VISION_MODELS.keys())))
             print(f"[Tools] Using chosen_model from config: {chosen_model}")
 
-            documents = None
-            try:
-                documents = choose_image_loader({"vision": {"chosen_model": chosen_model}})
-            except TypeError:
-                try:
-                    module_process_images.DEFAULT_VISION_MODEL_OVERRIDE = chosen_model
-                    print("[Tools] Set module_process_images.DEFAULT_VISION_MODEL_OVERRIDE")
-                except Exception:
-                    pass
-                documents = choose_image_loader()
+            documents, processing_time = choose_image_loader(
+                {"vision": {"chosen_model": chosen_model}}, return_timing=True
+            )
 
-            self.finished.emit(documents)
+            self.finished.emit(documents, processing_time)
         except Exception as e:
             error_msg = f"Error in image processing: {str(e)}\n{traceback.format_exc()}"
             self.error.emit(error_msg)
@@ -271,11 +264,11 @@ class VisionToolSettingsTab(QWidget):
             self.thread.error.connect(self.onProcessingError)
             self.thread.start()
 
-    def onProcessingFinished(self, documents):
+    def onProcessingFinished(self, documents, processing_time):
         self.thread = None
         print(f"Processed {len(documents)} documents")
         contents = self.extract_page_content(documents)
-        self.save_page_contents(contents)
+        self.save_page_contents(contents, processing_time)
 
     def onProcessingError(self, error_msg):
         self.thread = None
@@ -369,11 +362,15 @@ class VisionToolSettingsTab(QWidget):
         avg_length = total_length / len(documents) if documents else 0
         return contents, avg_length
 
-    def save_page_contents(self, contents):
+    def save_page_contents(self, contents, processing_time=0.0):
         contents, avg_length = contents
+        image_count = len(contents)
+        avg_time = (processing_time / image_count) if image_count else 0.0
 
         with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', encoding='utf-8', delete=False) as temp_file:
             temp_file.write(f"Average Summary Length: {avg_length:.2f} characters\n")
+            temp_file.write(f"Total Processing Time: {processing_time:.2f} seconds (excludes model load)\n")
+            temp_file.write(f"Average Processing Time Per Image: {avg_time:.2f} seconds\n")
             temp_file.write("="*50 + "\n\n")
 
             for filepath, content, length in contents:
