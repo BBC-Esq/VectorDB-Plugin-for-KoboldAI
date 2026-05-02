@@ -52,6 +52,7 @@ IMAGE_PROMPT_BRIEF = (
 
 IMAGE_PROMPT_OVERRIDES = {
     'Liquid-VL - 480M': IMAGE_PROMPT_BRIEF,
+    'Liquid-VL - 1.6B': IMAGE_PROMPT_BRIEF,
 }
 
 def get_image_prompt(chosen_model: str) -> str:
