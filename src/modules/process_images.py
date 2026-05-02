@@ -45,9 +45,8 @@ IMAGE_PROMPT = (
 )
 
 IMAGE_PROMPT_BRIEF = (
-    "Briefly describe this image in two or three sentences. "
-    "Mention only the main subject, the setting, and any obvious text. "
-    "Keep the description short and do not repeat yourself."
+    "Describe this image in as much detail as possible but do not repeat yourself. "
+    "Your response should be no more than one paragraph, and try to keep it slightly shorter than you normally would."
 )
 
 IMAGE_PROMPT_OVERRIDES = {
