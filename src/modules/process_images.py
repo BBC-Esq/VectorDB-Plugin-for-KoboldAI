@@ -44,39 +44,14 @@ IMAGE_PROMPT = (
     "Your response should be no more than one paragraph, but the paragraph can be as long as you want."
 )
 
-IMAGE_PROMPT_COMPACT = (
-    "Describe this image clearly and concisely in a single paragraph. "
-    "Focus on the main subjects, the setting, and any visible text. "
-    "Do not repeat yourself."
-)
-
 IMAGE_PROMPT_BRIEF = (
     "Briefly describe this image in two or three sentences. "
     "Mention only the main subject, the setting, and any obvious text. "
     "Keep the description short and do not repeat yourself."
 )
 
-IMAGE_PROMPT_DOCUMENT = (
-    "Describe this image in detail in a single paragraph. "
-    "If the image contains a document, table, chart, or any text, "
-    "transcribe and describe its contents accurately. Do not repeat yourself."
-)
-
-IMAGE_PROMPT_OCR = (
-    "Describe this image in as much detail as possible in a single paragraph. "
-    "Transcribe any visible text exactly as it appears. Do not repeat yourself."
-)
-
 IMAGE_PROMPT_OVERRIDES = {
-    'Liquid-VL - 480M':   IMAGE_PROMPT_BRIEF,
-    'Liquid-VL - 1.6B':   IMAGE_PROMPT_COMPACT,
-    'InternVL3 - 1b':     IMAGE_PROMPT_COMPACT,
-    'InternVL3 - 2b':     IMAGE_PROMPT_COMPACT,
-    'Qwen VL - 2b':       IMAGE_PROMPT_COMPACT,
-    'Granite Vision - 2b': IMAGE_PROMPT_DOCUMENT,
-    'Qwen VL - 3b':       IMAGE_PROMPT_OCR,
-    'Qwen VL - 4b':       IMAGE_PROMPT_OCR,
-    'Qwen VL - 7b':       IMAGE_PROMPT_OCR,
+    'Liquid-VL - 480M': IMAGE_PROMPT_BRIEF,
 }
 
 def get_image_prompt(chosen_model: str) -> str:
