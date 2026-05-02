@@ -195,8 +195,7 @@ def choose_documents_directory():
 
     if clicked_button == dir_button:
         selected_dir = QFileDialog.getExistingDirectory(
-            None, "Choose Directory for Database", str(current_dir),
-            QFileDialog.ShowDirsOnly | QFileDialog.DontUseNativeDialog,
+            None, "Choose Directory for Database", str(current_dir)
         )
         if selected_dir:
             selected_path = Path(selected_dir)
@@ -240,8 +239,7 @@ def choose_documents_directory():
                 )
     else:
         file_paths, _ = QFileDialog.getOpenFileNames(
-            None, "Choose Documents and Images for Database", str(current_dir),
-            "", "", QFileDialog.DontUseNativeDialog,
+            None, "Choose Documents and Images for Database", str(current_dir)
         )
         if file_paths:
             compatible_files = []
@@ -304,8 +302,7 @@ def load_config():
 def select_embedding_model_directory():
     initial_dir = Path("Models") if Path("Models").exists() else Path.home()
     chosen_directory = QFileDialog.getExistingDirectory(
-        None, "Select Embedding Model Directory", str(initial_dir),
-        QFileDialog.ShowDirsOnly | QFileDialog.DontUseNativeDialog,
+        None, "Select Embedding Model Directory", str(initial_dir)
     )
     if chosen_directory:
         config_file_path = Path(CONFIG_FILE)
