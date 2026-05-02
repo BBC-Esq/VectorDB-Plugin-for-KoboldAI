@@ -1025,20 +1025,21 @@ def get_embedding_batch_size(model_name: str, compute_device: str) -> int:
         return 2
 
     batch_size_mapping = {
-        'stella_en_1.5B': 4,
+        'inf-retriever-v1-7b': 2,
+        'Qwen3-Embedding-8B': 2,
+        'Qwen3-Embedding-4B': 3,
+        'inf-retriever-v1-1.5b': 3,
+        'Qwen3-Embedding-0.6B': 4,
+        'e5-base': 6,
         'e5-large': 7,
         'arctic-embed-l': 7,
-        'e5-base': 6,
         'bge-large-en-v1.5': 6,
-        'bge-base-en-v1.5': 8,
         'e5-small': 10,
-        'gte-large': 12,
         'Granite-30m-English': 12,
         'bge-small': 12,
         'bge-small-en-v1.5': 12,
-        'gte-base': 14,
+        'bge-base-en-v1.5': 8,
         'arctic-embed-m': 14,
-        'stella_en_400M_v5': 20,
     }
 
     model_name_lower = model_name.lower()

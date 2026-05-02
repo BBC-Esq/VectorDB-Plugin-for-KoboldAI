@@ -22,10 +22,11 @@ class VectorModelsTab(QWidget):
        self.model_radiobuttons.setExclusive(True)
        self.stretch_factors = {
            'BAAI': 4,
-           'NovaSearch': 3,
-           'intfloat': 4,
-           'Alibaba-NLP': 4,
+           'Google': 2,
            'IBM': 3,
+           'infly': 3,
+           'intfloat': 4,
+           'Qwen': 4,
            'Snowflake': 3,
        }
 

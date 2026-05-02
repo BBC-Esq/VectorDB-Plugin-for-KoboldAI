@@ -48,12 +48,16 @@ def _get_tokenize_parallel_workers():
 
 def _get_model_family(model_path: str) -> str:
     model_path_lower = model_path.lower()
+    if "qwen" in model_path_lower or "qwen3-embedding" in model_path_lower:
+        return "qwen"
     if "bge" in model_path_lower:
         return "bge"
     return "generic"
 
 
 def _get_prompt_for_family(family: str, is_query: bool = False) -> str:
+    if family == "qwen" and is_query:
+        return "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:"
     if family == "bge" and is_query:
         return "Represent this sentence for searching relevant passages: "
     return ""
@@ -85,6 +89,8 @@ ENCODE_BATCH_SIZE_BY_MODEL = {
     "bge-small-en-v1.5": 100,
     "bge-base-en-v1.5": 80,
     "bge-large-en-v1.5": 50,
+    "Qwen3-Embedding-0.6B": 10,
+    "Qwen3-Embedding-4B": 5,
 }
 
 
@@ -300,14 +306,27 @@ class DirectEmbeddingModel:
         self._initialize_model()
 
     def _initialize_model(self):
+        family = _get_model_family(self.model_path)
+
         model_kwargs = {
             "torch_dtype": self.dtype if self.dtype else torch.float32,
-            "attn_implementation": "sdpa",
         }
+
+        is_cuda = self.device.lower().startswith("cuda")
+        if family == "qwen":
+            if is_cuda and supports_flash_attention():
+                model_kwargs["attn_implementation"] = "flash_attention_2"
+            else:
+                model_kwargs["attn_implementation"] = "sdpa"
+        else:
+            model_kwargs["attn_implementation"] = "sdpa"
 
         tokenizer_kwargs = {
             "model_max_length": self.max_seq_length,
         }
+
+        if family == "qwen":
+            tokenizer_kwargs["padding_side"] = "left"
 
         self.model = SentenceTransformer(
             model_name_or_path=self.model_path,
@@ -495,7 +514,10 @@ def create_embedding_model(
     final_dtype = dtype if dtype is not None else _dtype
     final_batch_size = batch_size if batch_size is not None else _batch_size
 
-    max_seq_length = 512
+    if family == "qwen":
+        max_seq_length = 8192
+    else:
+        max_seq_length = 512
 
     prompt = _get_prompt_for_family(family, is_query)
 

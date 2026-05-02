@@ -497,41 +497,6 @@ full_install_libs = [
 ]
 
 VECTOR_MODELS = {
-    'Alibaba-NLP': [
-        {
-            'name': 'Alibaba-gte-base',
-            'dimensions': 768,
-            'max_sequence': 8192,
-            'size_mb': 547,
-            'repo_id': 'Alibaba-NLP/gte-base-en-v1.5',
-            'cache_dir': 'Alibaba-NLP--gte-base-en-v1.5',
-            'type': 'vector',
-            'parameters': '137m',
-            'precision': 'float32'
-        },
-        {
-            'name': 'Alibaba-gte-modernbert-base',
-            'dimensions': 768,
-            'max_sequence': 8192,
-            'size_mb': 298,
-            'repo_id': 'Alibaba-NLP/gte-modernbert-base',
-            'cache_dir': 'Alibaba-NLP--gte-modernbert-base',
-            'type': 'vector',
-            'parameters': '149m',
-            'precision': 'float16'
-        },
-        {
-            'name': 'Alibaba-gte-large',
-            'dimensions': 1024,
-            'max_sequence': 8192,
-            'size_mb': 1740,
-            'repo_id': 'Alibaba-NLP/gte-large-en-v1.5',
-            'cache_dir': 'Alibaba-NLP--gte-large-en-v1.5',
-            'type': 'vector',
-            'parameters': '434m',
-            'precision': 'float32'
-        },
-    ],
     'BAAI': [
         {
             'name': 'bge-small-en-v1.5',
@@ -542,7 +507,9 @@ VECTOR_MODELS = {
             'cache_dir': 'BAAI--bge-small-en-v1.5',
             'type': 'vector',
             'parameters': '33.4m',
-            'precision': 'float32'
+            'precision': 'float32',
+            'rank': 12,
+            'license': 'mit',
         },
         {
             'name': 'bge-base-en-v1.5',
@@ -553,7 +520,9 @@ VECTOR_MODELS = {
             'cache_dir': 'BAAI--bge-base-en-v1.5',
             'type': 'vector',
             'parameters': '109m',
-            'precision': 'float32'
+            'precision': 'float32',
+            'rank': 10,
+            'license': 'mit',
         },
         {
             'name': 'bge-large-en-v1.5',
@@ -564,7 +533,24 @@ VECTOR_MODELS = {
             'cache_dir': 'BAAI--bge-large-en-v1.5',
             'type': 'vector',
             'parameters': '335m',
-            'precision': 'float32'
+            'precision': 'float32',
+            'rank': 7,
+            'license': 'mit',
+        },
+    ],
+    'Google': [
+        {
+            'name': 'embeddinggemma-300m',
+            'dimensions': 768,
+            'max_sequence': 2048,
+            'size_mb': 1210,
+            'repo_id': 'google/embeddinggemma-300m',
+            'cache_dir': 'google--embeddinggemma-300m',
+            'type': 'vector',
+            'parameters': '303m',
+            'precision': 'float32',
+            'rank': 4,
+            'license': 'gemma - commercial ok',
         },
     ],
     'IBM': [
@@ -577,7 +563,9 @@ VECTOR_MODELS = {
             'cache_dir': 'ibm-granite--granite-embedding-30m-english',
             'type': 'vector',
             'parameters': '30.3m',
-            'precision': 'bfloat16'
+            'precision': 'bfloat16',
+            'rank': 14,
+            'license': 'apache-2.0',
         },
         {
             'name': 'Granite-125m-English',
@@ -588,7 +576,37 @@ VECTOR_MODELS = {
             'cache_dir': 'ibm-granite--granite-embedding-125m-english',
             'type': 'vector',
             'parameters': '125m',
-            'precision': 'bfloat16'
+            'precision': 'bfloat16',
+            'rank': 13,
+            'license': 'apache-2.0',
+        },
+    ],
+    'infly': [
+        {
+            'name': 'inf-retriever-v1-1.5b',
+            'dimensions': 1536,
+            'max_sequence': 8192,
+            'size_mb': 3090,
+            'repo_id': 'infly/inf-retriever-v1-1.5b',
+            'cache_dir': 'infly--inf-retriever-v1-1.5b',
+            'type': 'vector',
+            'parameters': '1540m',
+            'precision': 'bfloat16',
+            'rank': 16,
+            'license': 'apache-2.0',
+        },
+        {
+            'name': 'inf-retriever-v1-7b',
+            'dimensions': 3584,
+            'max_sequence': 8192,
+            'size_mb': 14130,
+            'repo_id': 'infly/inf-retriever-v1',
+            'cache_dir': 'infly--inf-retriever-v1-7b',
+            'type': 'vector',
+            'parameters': '7070m',
+            'precision': 'bfloat16',
+            'rank': 15,
+            'license': 'apache-2.0',
         },
     ],
     'intfloat': [
@@ -601,7 +619,9 @@ VECTOR_MODELS = {
             'cache_dir': 'intfloat--e5-small-v2',
             'type': 'vector',
             'parameters': '33.4m',
-            'precision': 'float32'
+            'precision': 'float32',
+            'rank': 11,
+            'license': 'mit',
         },
         {
             'name': 'e5-base-v2',
@@ -612,7 +632,9 @@ VECTOR_MODELS = {
             'cache_dir': 'intfloat--e5-base-v2',
             'type': 'vector',
             'parameters': '109m',
-            'precision': 'float32'
+            'precision': 'float32',
+            'rank': 8,
+            'license': 'mit',
         },
         {
             'name': 'e5-large-v2',
@@ -623,31 +645,50 @@ VECTOR_MODELS = {
             'cache_dir': 'intfloat--e5-large-v2',
             'type': 'vector',
             'parameters': '335m',
-            'precision': 'float32'
+            'precision': 'float32',
+            'rank': 7,
+            'license': 'mit',
         },
     ],
-    'NovaSearch': [
+    'Qwen': [
         {
-            'name': 'stella_en_1.5B_v5',
-            'dimensions': 1024,
-            'max_sequence': 131072,
-            'size_mb': 6170,
-            'repo_id': 'NovaSearch/stella_en_1.5B_v5',
-            'cache_dir': 'NovaSearch--stella_en_1.5B_v5',
-            'type': 'vector',
-            'parameters': '1540m',
-            'precision': 'float32'
-        },
-        {
-            'name': 'stella_en_400M_v5',
+            'name': 'Qwen3-Embedding-0.6B',
             'dimensions': 1024,
             'max_sequence': 8192,
-            'size_mb': 1740,
-            'repo_id': 'NovaSearch/stella_en_400M_v5',
-            'cache_dir': 'NovaSearch--stella_en_400M_v5',
+            'size_mb': 1190,
+            'repo_id': 'Qwen/Qwen3-Embedding-0.6B',
+            'cache_dir': 'Qwen--Qwen3-Embedding-0.6B',
             'type': 'vector',
-            'parameters': '435m',
-            'precision': 'float32'
+            'parameters': '596m',
+            'precision': 'bfloat16',
+            'rank': 3,
+            'license': 'apache-2.0',
+        },
+        {
+            'name': 'Qwen3-Embedding-4B',
+            'dimensions': 2560,
+            'max_sequence': 8192,
+            'size_mb': 4970,
+            'repo_id': 'Qwen/Qwen3-Embedding-4B',
+            'cache_dir': 'Qwen--Qwen3-Embedding-4B',
+            'type': 'vector',
+            'parameters': '4020m',
+            'precision': 'bfloat16',
+            'rank': 2,
+            'license': 'apache-2.0',
+        },
+        {
+            'name': 'Qwen3-Embedding-8B',
+            'dimensions': 4096,
+            'max_sequence': 8192,
+            'size_mb': 15136,
+            'repo_id': 'Qwen/Qwen3-Embedding-8B',
+            'cache_dir': 'Qwen--Qwen3-Embedding-8B',
+            'type': 'vector',
+            'parameters': '7570m',
+            'precision': 'bfloat16',
+            'rank': 1,
+            'license': 'apache-2.0',
         },
     ],
     'Snowflake': [
@@ -660,7 +701,9 @@ VECTOR_MODELS = {
             'cache_dir': 'Snowflake--snowflake-arctic-embed-m-v2.0',
             'type': 'vector',
             'parameters': '305m',
-            'precision': 'float32'
+            'precision': 'float32',
+            'rank': 6,
+            'license': 'apache-2.0',
         },
         {
             'name': 'arctic-embed-l-v2.0',
@@ -671,7 +714,9 @@ VECTOR_MODELS = {
             'cache_dir': 'Snowflake--snowflake-arctic-embed-l-v2.0',
             'type': 'vector',
             'parameters': '568m',
-            'precision': 'float32'
+            'precision': 'float32',
+            'rank': 5,
+            'license': 'apache-2.0',
         },
     ],
 }
