@@ -44,6 +44,44 @@ IMAGE_PROMPT = (
     "Your response should be no more than one paragraph, but the paragraph can be as long as you want."
 )
 
+IMAGE_PROMPT_COMPACT = (
+    "Describe this image clearly and concisely in a single paragraph. "
+    "Focus on the main subjects, the setting, and any visible text. "
+    "Do not repeat yourself."
+)
+
+IMAGE_PROMPT_BRIEF = (
+    "Briefly describe this image in two or three sentences. "
+    "Mention only the main subject, the setting, and any obvious text. "
+    "Keep the description short and do not repeat yourself."
+)
+
+IMAGE_PROMPT_DOCUMENT = (
+    "Describe this image in detail in a single paragraph. "
+    "If the image contains a document, table, chart, or any text, "
+    "transcribe and describe its contents accurately. Do not repeat yourself."
+)
+
+IMAGE_PROMPT_OCR = (
+    "Describe this image in as much detail as possible in a single paragraph. "
+    "Transcribe any visible text exactly as it appears. Do not repeat yourself."
+)
+
+IMAGE_PROMPT_OVERRIDES = {
+    'Liquid-VL - 480M':   IMAGE_PROMPT_BRIEF,
+    'Liquid-VL - 1.6B':   IMAGE_PROMPT_COMPACT,
+    'InternVL3 - 1b':     IMAGE_PROMPT_COMPACT,
+    'InternVL3 - 2b':     IMAGE_PROMPT_COMPACT,
+    'Qwen VL - 2b':       IMAGE_PROMPT_COMPACT,
+    'Granite Vision - 2b': IMAGE_PROMPT_DOCUMENT,
+    'Qwen VL - 3b':       IMAGE_PROMPT_OCR,
+    'Qwen VL - 4b':       IMAGE_PROMPT_OCR,
+    'Qwen VL - 7b':       IMAGE_PROMPT_OCR,
+}
+
+def get_image_prompt(chosen_model: str) -> str:
+    return IMAGE_PROMPT_OVERRIDES.get(chosen_model, IMAGE_PROMPT)
+
 def get_best_device():
     return 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -277,7 +315,7 @@ class loader_internvl(BaseLoader):
     def process_single_image(self, raw_image):
         pv = self._prepare_image(raw_image).to(self.model_dtype).to(self.device)
 
-        question = f"<image>\n{IMAGE_PROMPT}"
+        question = f"<image>\n{get_image_prompt(self.config['vision']['chosen_model'])}"
 
         gen_cfg = {
             'num_beams': 1,
@@ -419,7 +457,7 @@ class loader_granite(BaseLoader):
         if raw_image.mode != "RGB":
             raw_image = raw_image.convert("RGB")
 
-        prompt = f"<|user|>\n<image>\n{IMAGE_PROMPT}\n<|assistant|>\n"
+        prompt = f"<|user|>\n<image>\n{get_image_prompt(self.config['vision']['chosen_model'])}\n<|assistant|>\n"
 
         inputs = self.processor(images=raw_image, text=prompt, return_tensors="pt").to(self.device)
 
@@ -512,7 +550,7 @@ class loader_qwenvl(BaseLoader):
 
         prompt = (
             "<|im_start|>user\n"
-            f"{IMAGE_PROMPT} <|vis_start|><|image_pad|><|vis_end|>\n"
+            f"{get_image_prompt(self.config['vision']['chosen_model'])} <|vis_start|><|image_pad|><|vis_end|>\n"
             "<|im_end|>\n"
             "<|im_start|>assistant\n"
         )
@@ -588,7 +626,7 @@ class loader_liquidvl(BaseLoader):
             "<|startoftext|><|im_start|>system\n"
             f"{system_text}<|im_end|>\n"
             "<|im_start|>user\n"
-            f"<image>{IMAGE_PROMPT}<|im_end|>\n"
+            f"<image>{get_image_prompt(self.config['vision']['chosen_model'])}<|im_end|>\n"
             "<|im_start|>assistant\n"
         )
 
