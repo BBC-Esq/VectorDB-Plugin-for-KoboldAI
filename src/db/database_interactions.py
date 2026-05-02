@@ -477,7 +477,7 @@ class CreateVectorDB:
 
             print("Processing any images...")
             try:
-                from module_process_images import choose_image_loader
+                from modules.process_images import choose_image_loader
                 image_documents = choose_image_loader()
                 if isinstance(image_documents, list) and image_documents:
                     for doc in image_documents:
