@@ -44,15 +44,21 @@ IMAGE_PROMPT = (
     "Your response should be no more than one paragraph, but the paragraph can be as long as you want."
 )
 
-IMAGE_PROMPT_BRIEF = (
+IMAGE_PROMPT_LIQUID_480M = (
     "Describe this image in detail but do not repeat yourself. "
     "Your response should be a single paragraph of approximately 125 words, "
     "and aim for a consistent length regardless of how simple or complex the image is."
 )
 
+IMAGE_PROMPT_LIQUID_1_6B = (
+    "Describe this image in detail but do not repeat yourself. "
+    "Your response should be a single paragraph of approximately 115 words, "
+    "and aim for a consistent length regardless of how simple or complex the image is."
+)
+
 IMAGE_PROMPT_OVERRIDES = {
-    'Liquid-VL - 480M': IMAGE_PROMPT_BRIEF,
-    'Liquid-VL - 1.6B': IMAGE_PROMPT_BRIEF,
+    'Liquid-VL - 480M': IMAGE_PROMPT_LIQUID_480M,
+    'Liquid-VL - 1.6B': IMAGE_PROMPT_LIQUID_1_6B,
 }
 
 def get_image_prompt(chosen_model: str) -> str:
