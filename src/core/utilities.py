@@ -466,32 +466,6 @@ def get_appropriate_dtype(compute_device, use_half, model_native_precision):
         logging.debug(f"Unrecognized precision '{model_native_precision}', returning float32")
         return torch.float32
 
-def cpu_db_creation_vision_model_compatibility(directory, image_extensions, config_path):
-    has_images = False
-    for root, _, files in os.walk(directory):
-        if any(file.lower().endswith(ext) for file in files for ext in image_extensions):
-            has_images = True
-            break
-
-    if not has_images:
-        return False, None
-
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-
-    compute_device = config.get('Compute_Device', {}).get('database_creation', 'cpu')
-
-    if compute_device.lower() == 'cpu':
-        return True, None
-
-    embedding_model = config.get('EMBEDDING_MODEL_NAME', '').lower()
-    if not (embedding_model.endswith('florence-2-base') or embedding_model.endswith('florence-2-large')):
-        message = ("You've selected one or more images to process but have selected an incompatible vision model "
-                   "when creating the database with a CPU. Please select either 'Florence-2-base' or 'Florence-2-large'.")
-        return True, message
-
-    return True, None
-
 def print_first_citation_metadata(metadata_list):
     if metadata_list:
         print("Metadata attributes/fields for the first citation:")
