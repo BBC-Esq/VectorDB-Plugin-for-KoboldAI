@@ -46,7 +46,7 @@ IMAGE_PROMPT = (
 
 IMAGE_PROMPT_LIQUID_480M = (
     "Describe this image in detail but do not repeat yourself. "
-    "Your response should be a single paragraph of approximately 125 words, "
+    "Your response should be a single paragraph of approximately 130 words, "
     "and aim for a consistent length regardless of how simple or complex the image is."
 )
 
