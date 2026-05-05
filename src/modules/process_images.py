@@ -13,16 +13,11 @@ import yaml
 from PIL import Image
 from tqdm import tqdm
 from transformers import (
-    AutoModelForCausalLM,
     AutoModel,
     AutoTokenizer,
     AutoProcessor,
     BitsAndBytesConfig,
-    Qwen2_5_VLForConditionalGeneration,
-    GenerationConfig,
-    AutoConfig,
-    AutoModelForVision2Seq,
-    AutoModelForImageTextToText
+    AutoModelForImageTextToText,
 )
 from db.document_processor import Document
 from core.extract_metadata import extract_typed_metadata
@@ -39,30 +34,30 @@ current_directory = PROJECT_ROOT
 CACHE_DIR = current_directory / "models" / "vision"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-IMAGE_PROMPT = (
-    "Describe this image in as much detail as possible but do not repeat yourself. "
-    "Your response should be no more than one paragraph, but the paragraph can be as long as you want."
-)
-
-IMAGE_PROMPT_LIQUID_480M = (
+IMAGE_PROMPT_TEMPLATE = (
     "Describe this image in detail but do not repeat yourself. "
-    "Your response should be a single paragraph of approximately 130 words, "
+    "Your response should be a single paragraph of approximately {n} words, "
     "and aim for a consistent length regardless of how simple or complex the image is."
 )
 
-IMAGE_PROMPT_LIQUID_1_6B = (
-    "Describe this image in detail but do not repeat yourself. "
-    "Your response should be a single paragraph of approximately 115 words, "
-    "and aim for a consistent length regardless of how simple or complex the image is."
-)
+IMAGE_PROMPT_DEFAULT_WORDS = 125
 
-IMAGE_PROMPT_OVERRIDES = {
-    'Liquid-VL - 480M': IMAGE_PROMPT_LIQUID_480M,
-    'Liquid-VL - 1.6B': IMAGE_PROMPT_LIQUID_1_6B,
+VISION_MODEL_WORD_TARGETS = {
+    'Liquid-VL - 480M':    130,
+    'Liquid-VL - 1.6B':    120,
+    'Liquid-VL - 3B':      120,
+    'InternVL3 - 1b':      145,
+    'InternVL3 - 2b':      155,
+    'InternVL3 - 8b':      120,
+    'InternVL3 - 14b':     125,
+    'Qwen VL - 3b':        125,
 }
 
+IMAGE_PROMPT = IMAGE_PROMPT_TEMPLATE.format(n=IMAGE_PROMPT_DEFAULT_WORDS)
+
 def get_image_prompt(chosen_model: str) -> str:
-    return IMAGE_PROMPT_OVERRIDES.get(chosen_model, IMAGE_PROMPT)
+    n = VISION_MODEL_WORD_TARGETS.get(chosen_model, IMAGE_PROMPT_DEFAULT_WORDS)
+    return IMAGE_PROMPT_TEMPLATE.format(n=n)
 
 def get_best_device():
     return 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -310,150 +305,6 @@ class loader_internvl(BaseLoader):
         return self.normalize_response(resp)
 
 
-class loader_granite(BaseLoader):
-
-    def initialize_model_and_tokenizer(self):
-        chosen_model = self.config['vision']['chosen_model']
-        model_id = VISION_MODELS[chosen_model]['repo_id']
-        save_dir = VISION_MODELS[chosen_model]["cache_dir"]
-        cache_dir = CACHE_DIR / save_dir
-        cache_dir.mkdir(parents=True, exist_ok=True)
-
-        processor = AutoProcessor.from_pretrained(
-            model_id,
-            use_fast=True,
-            cache_dir=cache_dir,
-            token=False
-        )
-
-        low_tiling_pinpoints = [[384, 384], [768, 384], [384, 768]]
-
-        medium_tiling_pinpoints = [
-            [384, 384],
-            [384, 768],
-            [768, 384],
-            [384, 1152],
-            [1152, 384],
-            [384, 1536],
-            [768, 768],
-            [1536, 384],
-        ]
-
-        high_tiling_pinpoints = [
-            [384, 384],
-            [384, 768],
-            [768, 384],
-            [384, 1152],
-            [1152, 384],
-            [384, 1536],
-            [768, 768],
-            [1536, 384],
-            [384, 1920],
-            [1920, 384],
-            [384, 2304],
-            [768, 1152],
-            [1152, 768],
-            [2304, 384],
-        ]
-
-        all_tiling_pinpoints = [
-            [384, 384], [384, 768], [384, 1152], [384, 1536],
-            [384, 1920], [384, 2304], [384, 2688], [384, 3072],
-            [384, 3456], [384, 3840],
-            [768, 384], [768, 768], [768, 1152], [768, 1536], [768, 1920],
-            [1152, 384], [1152, 768], [1152, 1152],
-            [1536, 384], [1536, 768],
-            [1920, 384], [1920, 768],
-            [2304, 384], [2688, 384], [3072, 384], [3456, 384], [3840, 384]
-        ]
-
-        custom_pinpoints = medium_tiling_pinpoints
-
-        try:
-            processor.image_grid_pinpoints = custom_pinpoints
-        except Exception:
-            pass
-
-        ip = getattr(processor, "image_processor", None)
-        if ip is not None and hasattr(ip, "image_grid_pinpoints"):
-            ip.image_grid_pinpoints = custom_pinpoints
-
-        if self.device == "cuda" and torch.cuda.is_available():
-            dtype, precision_str = self.detect_dtype()
-
-            quant_cfg = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=dtype,
-                bnb_4bit_quant_type="nf4",
-                llm_int8_skip_modules=[
-                    "vision_tower",
-                    "multi_modal_projector",
-                    "language_model.embed_tokens",
-                    "language_model.norm",
-                    "lm_head"
-                ]
-            )
-
-            model = AutoModelForVision2Seq.from_pretrained(
-                model_id,
-                quantization_config=quant_cfg,
-                torch_dtype=dtype,
-                low_cpu_mem_usage=True,
-                cache_dir=cache_dir,
-                token=False,
-                device_map="auto"
-            )
-            my_cprint(f"{chosen_model} loaded into memory on CUDA ({precision_str})", "green")
-
-        else:
-            model = AutoModelForVision2Seq.from_pretrained(
-                model_id,
-                torch_dtype=torch.float32,
-                low_cpu_mem_usage=True,
-                cache_dir=cache_dir,
-                token=False,
-                device_map={"": "cpu"}
-            )
-            my_cprint(f"{chosen_model} loaded into memory on CPU (float32)", "green")
-
-        try:
-            if hasattr(model, "config") and hasattr(model.config, "image_grid_pinpoints"):
-                model.config.image_grid_pinpoints = custom_pinpoints
-        except Exception:
-            pass
-        if hasattr(model, "image_grid_pinpoints"):
-            try:
-                setattr(model, "image_grid_pinpoints", custom_pinpoints)
-            except Exception:
-                pass
-
-        model.eval()
-
-        self.model = model
-        self.processor = processor
-
-        return model, None, processor
-
-    @torch.inference_mode()
-    def process_single_image(self, raw_image):
-        if raw_image.mode != "RGB":
-            raw_image = raw_image.convert("RGB")
-
-        prompt = f"<|user|>\n<image>\n{get_image_prompt(self.config['vision']['chosen_model'])}\n<|assistant|>\n"
-
-        inputs = self.processor(images=raw_image, text=prompt, return_tensors="pt").to(self.device)
-
-        output = self.model.generate(
-            **inputs,
-            max_new_tokens=512,
-            do_sample=False,
-            num_beams=1
-        )
-
-        resp = self.processor.decode(output[0], skip_special_tokens=True).split('<|assistant|>')[-1].strip()
-        return self.normalize_response(resp)
-
-
 class loader_qwenvl(BaseLoader):
     def initialize_model_and_tokenizer(self):
         chosen_model = self.config['vision']['chosen_model']
@@ -501,7 +352,7 @@ class loader_qwenvl(BaseLoader):
 
         processor = AutoProcessor.from_pretrained(
             model_id,
-            use_fast=True,
+            backend="torchvision",
             min_pixels=28*28,
             max_pixels=1280*28*28,
             trust_remote_code=True,
@@ -639,5 +490,5 @@ class loader_liquidvl(BaseLoader):
         )
 
         new_tokens = outputs[:, input_len:]
-        text = self.processor.batch_decode(new_tokens, skip_special_tokens=True)[0].strip()
+        text = self.processor.decode(new_tokens[0], skip_special_tokens=True).strip()
         return self.normalize_response(text)

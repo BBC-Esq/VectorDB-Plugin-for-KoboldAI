@@ -9,6 +9,7 @@ import os
 import traceback
 import gc
 import time
+import statistics
 from PIL import Image
 import torch
 from PySide6.QtCore import QThread, Signal as pyqtSignal, Qt
@@ -367,9 +368,23 @@ class VisionToolSettingsTab(QWidget):
         image_count = len(contents)
         avg_time = (processing_time / image_count) if image_count else 0.0
 
+        lengths = [length for _, _, length in contents]
+        if lengths:
+            median_length = statistics.median(lengths)
+            min_length = min(lengths)
+            max_length = max(lengths)
+            stdev_length = statistics.stdev(lengths) if len(lengths) > 1 else 0.0
+            cv_pct = (stdev_length / avg_length * 100.0) if avg_length else 0.0
+        else:
+            median_length = min_length = max_length = stdev_length = cv_pct = 0.0
+
         with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', encoding='utf-8', delete=False) as temp_file:
             temp_file.write(f"Vision Model: {chosen_model}\n")
             temp_file.write(f"Average Summary Length: {avg_length:.2f} characters\n")
+            temp_file.write(f"Median Summary Length: {median_length:.2f} characters\n")
+            temp_file.write(f"Shortest / Longest Summary: {min_length} / {max_length} characters\n")
+            temp_file.write(f"Standard Deviation: {stdev_length:.2f} characters\n")
+            temp_file.write(f"Coefficient of Variation: {cv_pct:.1f}% (lower = more consistent)\n")
             temp_file.write(f"Total Processing Time: {processing_time:.2f} seconds (excludes model load)\n")
             temp_file.write(f"Average Processing Time Per Image: {avg_time:.2f} seconds\n")
             temp_file.write("="*50 + "\n\n")

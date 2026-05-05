@@ -30,6 +30,10 @@ src/Scraped_Documentation/
 src/Assets/
 src/document_processor.log
 src/metadata.txt
+src/app.log
+
+# --- Vision-model benchmark output ---
+benchmark_summary_*.txt
 
 # --- Large bundled binary (>100MB, not suitable for git) ---
 src/koboldcpp_cu12.exe
