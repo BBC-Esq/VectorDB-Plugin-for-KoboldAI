@@ -541,20 +541,20 @@ def delete_file(file_path):
     except OSError:
         QMessageBox.warning(None, "Unable to delete file(s), please delete manually.")
 
-def check_preconditions_for_db_creation(script_dir, database_name):
+def check_preconditions_for_db_creation(script_dir, database_name, skip_ocr=False):
     if not database_name or len(database_name) < 3 or database_name.lower() in ["null", "none"]:
-        QMessageBox.warning(None, "Invalid Name", "Name must be at least 3 characters long and not be 'null' or 'none.'")
-        return False, "Invalid database name."
+        return False, "Name must be at least 3 characters long and not be 'null' or 'none.'"
 
-    database_folder_path = script_dir / "Docs_for_DB" / database_name
-    if database_folder_path.exists():
-        QMessageBox.warning(None, "Database Exists", "A database with this name already exists. Please choose a different database name.")
-        return False, "Database already exists."
+    vector_db_path = script_dir / "Vector_DB" / database_name
+    if vector_db_path.exists():
+        return False, (
+            f"A vector database called '{database_name}' already exists—"
+            "choose a different name or delete the old one first."
+        )
 
     config_path = script_dir / 'config.yaml'
     if not config_path.exists():
-        QMessageBox.warning(None, "Configuration Missing", "The configuration file (config.yaml) is missing.")
-        return False, "Configuration file missing."
+        return False, "The configuration file (config.yaml) is missing."
 
     with open(config_path, 'r') as file:
         config = yaml.safe_load(file)
@@ -562,47 +562,33 @@ def check_preconditions_for_db_creation(script_dir, database_name):
     image_extensions = ['.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tif', '.tiff']
     documents_dir = script_dir / "Docs_for_DB"
     if platform.system() == "Darwin" and any(file.suffix in image_extensions for file in documents_dir.iterdir() if file.is_file()):
-        QMessageBox.warning(None, "MacOS Limitation", "Image processing has been disabled for MacOS until a fix can be implemented. Please remove all image files and try again.")
-        return False, "Image files present on MacOS."
+        return False, "Image processing has been disabled for MacOS until a fix can be implemented. Please remove all image files and try again."
 
     embedding_model_name = config.get('EMBEDDING_MODEL_NAME')
     if not embedding_model_name:
-        QMessageBox.warning(None, "Model Missing", "You must first download an embedding model, select it, and choose documents first before proceeding.")
-        return False, "Embedding model not selected."
+        return False, "You must first download an embedding model, select it, and choose documents before proceeding."
 
     if not any(file.is_file() for file in documents_dir.iterdir()):
-        QMessageBox.warning(None, "No Documents", "No documents are yet added to be processed.")
-        return False, "No documents in Docs_for_DB."
+        return False, "No documents are yet added to be processed."
 
     compute_device = config.get('Compute_Device', {}).get('available', [])
     database_creation = config.get('Compute_Device', {}).get('database_creation')
     if ("cuda" in compute_device or "mps" in compute_device) and database_creation == "cpu":
-        reply = QMessageBox.question(None, 'Warning',
-                                     "GPU-acceleration is available and highly recommended. Click OK to proceed or Cancel to go back and change the device.",
-                                     QMessageBox.Ok | QMessageBox.Cancel, QMessageBox.Cancel)
-        if reply == QMessageBox.Cancel:
-            return False, "User cancelled operation based on device check."
+        return False, ("GPU-acceleration is available and strongly recommended. "
+                       "Please switch the database creation device to 'cuda' or 'mps', "
+                       "or confirm your choice in the GUI.")
 
     if not torch.cuda.is_available():
-        with open(config_path, 'r') as file:
-            config = yaml.safe_load(file)
-
         if config.get('database', {}).get('half', False):
             message = ("CUDA is not available on your system, but half-precision (FP16) "
                        "is selected for database creation. Half-precision requires CUDA. "
                        "Please disable half-precision in the configuration or use a CUDA-enabled GPU.")
-            QMessageBox.warning(None, "CUDA Unavailable for Half-Precision", message)
-            return False, "CUDA unavailable for half-precision operation."
+            return False, message
 
-    ocr_check, ocr_message = check_pdfs_for_ocr(script_dir)
-    if not ocr_check:
-        return False, ocr_message
-
-    confirmation_reply = QMessageBox.question(None, 'Confirmation',
-                                             "Creating a vector database can take a significant amount of time and cannot be cancelled. Click OK to proceed.",
-                                             QMessageBox.Ok | QMessageBox.Cancel, QMessageBox.Cancel)
-    if confirmation_reply == QMessageBox.Cancel:
-        return False, "Database creation cancelled by user."
+    if not skip_ocr:
+        ocr_check, ocr_message = check_pdfs_for_ocr(script_dir)
+        if not ocr_check:
+            return False, ocr_message
 
     return True, ""
 
