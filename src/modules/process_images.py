@@ -2,22 +2,26 @@ import os
 import traceback
 import inspect
 import time
+import types
 import warnings
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import torch
-import torchvision.transforms as T
-from torchvision.transforms.functional import InterpolationMode
 import yaml
 from PIL import Image
 from tqdm import tqdm
 from transformers import (
+    AutoModelForCausalLM,
     AutoModel,
     AutoTokenizer,
     AutoProcessor,
     BitsAndBytesConfig,
-    AutoModelForImageTextToText,
+    Qwen2_5_VLForConditionalGeneration,
+    GenerationConfig,
+    AutoConfig,
+    AutoModelForVision2Seq,
+    AutoModelForImageTextToText
 )
 from db.document_processor import Document
 from core.extract_metadata import extract_typed_metadata
@@ -49,11 +53,15 @@ VISION_MODEL_WORD_TARGETS = {
     'InternVL3 - 1b':      145,
     'InternVL3 - 2b':      155,
     'InternVL3 - 8b':      120,
-    'InternVL3 - 14b':     125,
+    'Granite Vision - 2b': 125,
+    'Qwen VL - 2b':        125,
     'Qwen VL - 3b':        125,
+    'Qwen VL - 4b':        145,
+    'Qwen VL - 7b':        125,
 }
 
 IMAGE_PROMPT = IMAGE_PROMPT_TEMPLATE.format(n=IMAGE_PROMPT_DEFAULT_WORDS)
+
 
 def get_image_prompt(chosen_model: str) -> str:
     n = VISION_MODEL_WORD_TARGETS.get(chosen_model, IMAGE_PROMPT_DEFAULT_WORDS)
@@ -177,131 +185,233 @@ class BaseLoader:
 class loader_internvl(BaseLoader):
     def initialize_model_and_tokenizer(self):
         chosen_model = self.config['vision']['chosen_model']
-        info = VISION_MODELS[chosen_model]
-        cache_dir = CACHE_DIR / info["cache_dir"]
+        model_info = VISION_MODELS[chosen_model]
+        model_id = model_info['repo_id']
+        cache_dir = CACHE_DIR / model_info["cache_dir"]
         cache_dir.mkdir(parents=True, exist_ok=True)
-        
-        if self.device == "cuda":
-            dtype, precision_str = self.detect_dtype()
 
-            quant_config = BitsAndBytesConfig(
+        dtype, precision_str = self.detect_dtype()
+
+        processor = AutoProcessor.from_pretrained(
+            model_id,
+            use_fast=True,
+            cache_dir=cache_dir,
+            token=False,
+        )
+
+        if self.device == "cuda":
+            quantization_config = BitsAndBytesConfig(
                 load_in_4bit=True,
-                bnb_4bit_compute_dtype=dtype,
                 bnb_4bit_quant_type="nf4",
-                llm_int8_skip_modules=[
-                    "vision_model",
-                    "language_model.model.norm", 
-                    "language_model.output",
-                    "language_model.model.rotary_emb",
-                    "language_model.lm_head",
-                    "mlp1"
-                ]
+                bnb_4bit_compute_dtype=dtype,
+                bnb_4bit_use_double_quant=True,
+                llm_int8_skip_modules=["vision_tower", "multi_modal_projector", "lm_head"],
             )
-            model = AutoModel.from_pretrained(
-                info['repo_id'],
-                quantization_config=quant_config,
+            model = AutoModelForImageTextToText.from_pretrained(
+                model_id,
+                quantization_config=quantization_config,
                 torch_dtype=dtype,
                 low_cpu_mem_usage=True,
-                trust_remote_code=True,
                 cache_dir=cache_dir,
-                token=False
-            ).eval()
+                token=False,
+                device_map="auto",
+            )
             device_str = "CUDA"
         else:
             dtype = torch.float32
             precision_str = "float32"
-            model = AutoModel.from_pretrained(
-                info['repo_id'],
+            model = AutoModelForImageTextToText.from_pretrained(
+                model_id,
                 torch_dtype=dtype,
                 low_cpu_mem_usage=True,
-                trust_remote_code=True,
                 cache_dir=cache_dir,
                 token=False,
-                device_map={"": "cpu"}
-            ).eval()
+                device_map={"": "cpu"},
+            )
             device_str = "CPU"
 
+        model.eval()
         self.model_dtype = dtype
         my_cprint(f"{chosen_model} loaded into memory on {device_str} ({precision_str})", "green")
 
-        tokenizer = AutoTokenizer.from_pretrained(
-            info['repo_id'],
-            trust_remote_code=True,
+        return model, None, processor
+
+    @torch.inference_mode()
+    def process_single_image(self, raw_image):
+        if raw_image.mode != "RGB":
+            raw_image = raw_image.convert("RGB")
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": raw_image},
+                    {"type": "text", "text": get_image_prompt(self.config['vision']['chosen_model'])},
+                ],
+            }
+        ]
+
+        inputs = self.processor.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+        ).to(self.device, dtype=self.model_dtype)
+
+        input_len = inputs["input_ids"].shape[1]
+        output = self.model.generate(
+            **inputs,
+            max_new_tokens=512,
+            do_sample=False,
+        )
+        new_tokens = output[:, input_len:]
+        text = self.processor.batch_decode(new_tokens, skip_special_tokens=True)[0].strip()
+
+        return self.normalize_response(text)
+
+
+class loader_granite(BaseLoader):
+
+    def initialize_model_and_tokenizer(self):
+        chosen_model = self.config['vision']['chosen_model']
+        model_id = VISION_MODELS[chosen_model]['repo_id']
+        save_dir = VISION_MODELS[chosen_model]["cache_dir"]
+        cache_dir = CACHE_DIR / save_dir
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        processor = AutoProcessor.from_pretrained(
+            model_id,
+            use_fast=True,
             cache_dir=cache_dir,
             token=False
         )
 
-        return model, tokenizer, None
+        low_tiling_pinpoints = [[384, 384], [768, 384], [384, 768]]
 
-    def find_closest_aspect_ratio(self, aspect_ratio, ratios, w, h, sz):
-        best_diff = float('inf')
-        best = (1, 1)
-        area = w * h
-        for r in ratios:
-            ar = r[0] / r[1]
-            diff = abs(aspect_ratio - ar)
-            if diff < best_diff or (diff == best_diff and area > 0.5 * sz * sz * r[0] * r[1]):
-                best_diff = diff
-                best = r
+        medium_tiling_pinpoints = [
+            [384, 384],
+            [384, 768],
+            [768, 384],
+            [384, 1152],
+            [1152, 384],
+            [384, 1536],
+            [768, 768],
+            [1536, 384],
+        ]
 
-        return best
+        high_tiling_pinpoints = [
+            [384, 384],
+            [384, 768],
+            [768, 384],
+            [384, 1152],
+            [1152, 384],
+            [384, 1536],
+            [768, 768],
+            [1536, 384],
+            [384, 1920],
+            [1920, 384],
+            [384, 2304],
+            [768, 1152],
+            [1152, 768],
+            [2304, 384],
+        ]
 
-    def _build_transform(self, size):
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
-        return T.Compose([
-            T.Lambda(lambda img: img.convert('RGB') if img.mode != 'RGB' else img),
-            T.Resize((size, size), interpolation=InterpolationMode.LANCZOS, antialias=True),
-            T.ToTensor(),
-            T.Normalize(mean=mean, std=std)
-        ])
+        all_tiling_pinpoints = [
+            [384, 384], [384, 768], [384, 1152], [384, 1536],
+            [384, 1920], [384, 2304], [384, 2688], [384, 3072],
+            [384, 3456], [384, 3840],
+            [768, 384], [768, 768], [768, 1152], [768, 1536], [768, 1920],
+            [1152, 384], [1152, 768], [1152, 1152],
+            [1536, 384], [1536, 768],
+            [1920, 384], [1920, 768],
+            [2304, 384], [2688, 384], [3072, 384], [3456, 384], [3840, 384]
+        ]
 
-    def dynamic_preprocess(self, img, min_num=1, max_num=12, image_size=448, use_thumbnail=False):
-        w, h = img.size
-        ar = w / h
-        ratios = sorted(
-            {(i, j)
-             for n in range(min_num, max_num + 1)
-             for i in range(1, n + 1)
-             for j in range(1, n + 1)
-             if i * j <= max_num and i * j >= min_num},
-            key=lambda x: x[0] * x[1]
-        )
-        best = self.find_closest_aspect_ratio(ar, ratios, w, h, image_size)
-        tw, th = image_size * best[0], image_size * best[1]
-        resized = img.resize((tw, th))
-        blocks = best[0] * best[1]
-        cols = tw // image_size
-        parts = []
-        for i in range(blocks):
-            x = (i % cols) * image_size
-            y = (i // cols) * image_size
-            parts.append(resized.crop((x, y, x + image_size, y + image_size)))
-        if use_thumbnail and len(parts) != 1:
-            parts.append(img.resize((image_size, image_size)))
+        custom_pinpoints = medium_tiling_pinpoints
 
-        return parts
+        try:
+            processor.image_grid_pinpoints = custom_pinpoints
+        except Exception:
+            pass
 
-    def _prepare_image(self, raw_image, input_size=448, max_num=24):
-        imgs = self.dynamic_preprocess(raw_image, image_size=input_size, use_thumbnail=True, max_num=max_num)
-        tf = self._build_transform(input_size)
+        ip = getattr(processor, "image_processor", None)
+        if ip is not None and hasattr(ip, "image_grid_pinpoints"):
+            ip.image_grid_pinpoints = custom_pinpoints
 
-        return torch.stack([tf(im) for im in imgs])
+        if self.device == "cuda" and torch.cuda.is_available():
+            dtype, precision_str = self.detect_dtype()
+
+            quant_cfg = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=dtype,
+                bnb_4bit_quant_type="nf4",
+                llm_int8_skip_modules=[
+                    "vision_tower",
+                    "multi_modal_projector",
+                    "language_model.embed_tokens",
+                    "language_model.norm",
+                    "lm_head"
+                ]
+            )
+
+            model = AutoModelForVision2Seq.from_pretrained(
+                model_id,
+                quantization_config=quant_cfg,
+                torch_dtype=dtype,
+                low_cpu_mem_usage=True,
+                cache_dir=cache_dir,
+                token=False,
+                device_map="auto"
+            )
+            my_cprint(f"{chosen_model} loaded into memory on CUDA ({precision_str})", "green")
+
+        else:
+            model = AutoModelForVision2Seq.from_pretrained(
+                model_id,
+                torch_dtype=torch.float32,
+                low_cpu_mem_usage=True,
+                cache_dir=cache_dir,
+                token=False,
+                device_map={"": "cpu"}
+            )
+            my_cprint(f"{chosen_model} loaded into memory on CPU (float32)", "green")
+
+        try:
+            if hasattr(model, "config") and hasattr(model.config, "image_grid_pinpoints"):
+                model.config.image_grid_pinpoints = custom_pinpoints
+        except Exception:
+            pass
+        if hasattr(model, "image_grid_pinpoints"):
+            try:
+                setattr(model, "image_grid_pinpoints", custom_pinpoints)
+            except Exception:
+                pass
+
+        model.eval()
+
+        self.model = model
+        self.processor = processor
+
+        return model, None, processor
 
     @torch.inference_mode()
     def process_single_image(self, raw_image):
-        pv = self._prepare_image(raw_image).to(self.model_dtype).to(self.device)
+        if raw_image.mode != "RGB":
+            raw_image = raw_image.convert("RGB")
 
-        question = f"<image>\n{get_image_prompt(self.config['vision']['chosen_model'])}"
+        prompt = f"<|user|>\n<image>\n{get_image_prompt(self.config['vision']['chosen_model'])}\n<|assistant|>\n"
 
-        gen_cfg = {
-            'num_beams': 1,
-            'max_new_tokens': 512,
-            'do_sample': False,
-            'pad_token_id': self.tokenizer.pad_token_id
-        }
-        resp = self.model.chat(self.tokenizer, pv, question, gen_cfg)
+        inputs = self.processor(images=raw_image, text=prompt, return_tensors="pt").to(self.device)
 
+        output = self.model.generate(
+            **inputs,
+            max_new_tokens=512,
+            do_sample=False,
+            num_beams=1
+        )
+
+        resp = self.processor.decode(output[0], skip_special_tokens=True).split('<|assistant|>')[-1].strip()
         return self.normalize_response(resp)
 
 
@@ -352,10 +462,9 @@ class loader_qwenvl(BaseLoader):
 
         processor = AutoProcessor.from_pretrained(
             model_id,
-            backend="torchvision",
+            use_fast=True,
             min_pixels=28*28,
             max_pixels=1280*28*28,
-            trust_remote_code=True,
             cache_dir=cache_dir,
             token=False
         )
@@ -365,12 +474,12 @@ class loader_qwenvl(BaseLoader):
             quantization_config=quantization_config,
             torch_dtype=dtype,
             low_cpu_mem_usage=True,
-            trust_remote_code=True,
             cache_dir=cache_dir,
             token=False,
             device_map="auto",
         )
         model.eval()
+        self._replace_conv3d_patch_embed_with_matmul(model)
 
         _, precision_str = self.detect_dtype()
         device_str = "CUDA" if self.device == "cuda" else "CPU"
@@ -381,9 +490,12 @@ class loader_qwenvl(BaseLoader):
     @torch.inference_mode()
     def process_single_image(self, raw_image):
 
+        # Prompt is hand-built as ChatML. A more robust alternative is to build it via
+        # self.processor.apply_chat_template(messages, ...) (like the sibling loaders),
+        # which produces the exact per-model template -- consider switching to that later.
         prompt = (
             "<|im_start|>user\n"
-            f"{get_image_prompt(self.config['vision']['chosen_model'])} <|vis_start|><|image_pad|><|vis_end|>\n"
+            f"{get_image_prompt(self.config['vision']['chosen_model'])} <|vision_start|><|image_pad|><|vision_end|>\n"
             "<|im_end|>\n"
             "<|im_start|>assistant\n"
         )
@@ -392,6 +504,7 @@ class loader_qwenvl(BaseLoader):
             text=prompt,
             return_tensors="pt"
         ).to(self.device)
+        input_len = inputs["input_ids"].shape[1]
         output = self.model.generate(
             **inputs,
             max_new_tokens=1024,
@@ -401,10 +514,43 @@ class loader_qwenvl(BaseLoader):
             num_beams=1,
             temperature=None
         )
-        response = self.processor.decode(output[0], skip_special_tokens=True)
-        response = response.split('assistant')[-1].strip()
+        new_tokens = output[:, input_len:]
+        response = self.processor.batch_decode(new_tokens, skip_special_tokens=True)[0].strip()
 
         return self.normalize_response(response)
+
+    def _replace_conv3d_patch_embed_with_matmul(self, model):
+        """Replace the Qwen-VL vision patch-embed Conv3d with its exact matmul equivalent.
+
+        The patch embed is an ``nn.Conv3d``. On some GPUs cuDNN has no fast bf16/fp16
+        3D-convolution kernel for certain shapes and falls back to a path ~100x slower:
+        Qwen3-VL's conv took ~12-15s per image here (the entire prefill), while
+        Qwen2.5-VL's differently shaped conv hits a fast kernel and stays ~0.15s -- same
+        code and dtypes, only the conv dimensions differ.
+
+        Because ``kernel == stride == patch size``, each patch is an independent linear
+        projection, so the conv is mathematically an exact matmul. Swapping it for that
+        matmul sidesteps cuDNN: microseconds in bf16, numerically identical to within
+        bf16 rounding. No-op if the patch embed is not an ``nn.Conv3d``.
+        """
+        try:
+            patch_embed = model.model.visual.patch_embed
+            proj = patch_embed.proj
+            if not isinstance(proj, torch.nn.Conv3d):
+                return
+            weight = proj.weight.detach().reshape(proj.weight.shape[0], -1).t().contiguous()
+            bias = proj.bias.detach() if proj.bias is not None else None
+            in_features = weight.shape[0]
+
+            def forward(self, hidden_states):
+                hidden_states = hidden_states.view(-1, in_features).to(weight.dtype)
+                if bias is None:
+                    return hidden_states.matmul(weight)
+                return torch.addmm(bias, hidden_states, weight)
+
+            patch_embed.forward = types.MethodType(forward, patch_embed)
+        except Exception as exc:
+            my_cprint(f"Qwen-VL patch-embed optimization skipped: {exc}", "yellow")
 
 
 class loader_liquidvl(BaseLoader):
@@ -425,7 +571,6 @@ class loader_liquidvl(BaseLoader):
 
         model = AutoModelForImageTextToText.from_pretrained(
             source,
-            trust_remote_code=True,
             torch_dtype=dtype,
             cache_dir=cache_dir,
             device_map=device_map,
@@ -433,7 +578,6 @@ class loader_liquidvl(BaseLoader):
 
         processor = AutoProcessor.from_pretrained(
             source,
-            trust_remote_code=True,
             cache_dir=cache_dir,
         )
 
@@ -490,5 +634,5 @@ class loader_liquidvl(BaseLoader):
         )
 
         new_tokens = outputs[:, input_len:]
-        text = self.processor.decode(new_tokens[0], skip_special_tokens=True).strip()
+        text = self.processor.batch_decode(new_tokens, skip_special_tokens=True)[0].strip()
         return self.normalize_response(text)
