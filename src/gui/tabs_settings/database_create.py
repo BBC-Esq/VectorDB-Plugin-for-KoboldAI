@@ -1,7 +1,9 @@
 import yaml
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIntValidator
-from PySide6.QtWidgets import QWidget, QLabel, QLineEdit, QGridLayout, QSizePolicy, QComboBox
+from PySide6.QtWidgets import QWidget, QLabel, QLineEdit, QGridLayout, QSizePolicy, QComboBox, QCheckBox
+
+from core.constants import TOOLTIPS
 
 class ChunkSettingsTab(QWidget):
     def __init__(self):
@@ -43,7 +45,15 @@ class ChunkSettingsTab(QWidget):
         current_overlap = self.database_config.get('chunk_overlap', '')
         self.current_overlap_label = QLabel(f"{current_overlap}")
         grid_layout.addWidget(self.current_overlap_label, 0, 7)
-        
+
+        self.half_precision_label = QLabel("Half-Precision (2x speedup - GPU only):")
+        self.half_precision_label.setToolTip(TOOLTIPS["HALF_PRECISION"])
+        grid_layout.addWidget(self.half_precision_label, 0, 9)
+        self.half_precision_checkbox = QCheckBox()
+        self.half_precision_checkbox.setChecked(self.database_config.get('half', False))
+        self.half_precision_checkbox.setToolTip(TOOLTIPS["HALF_PRECISION"])
+        grid_layout.addWidget(self.half_precision_checkbox, 0, 10)
+
         self.setLayout(grid_layout)
 
     def update_config(self):
@@ -71,10 +81,16 @@ class ChunkSettingsTab(QWidget):
             config_data['database']['chunk_size'] = int(new_chunk_size)
             self.current_size_label.setText(f"{new_chunk_size}")
 
+        new_half_precision = self.half_precision_checkbox.isChecked()
+        if new_half_precision != self.database_config.get('half', False):
+            settings_changed = True
+            config_data['database']['half'] = new_half_precision
+
         if settings_changed:
             with open('config.yaml', 'w', encoding='utf-8') as f:
                 yaml.safe_dump(config_data, f)
-            
+
+            self.database_config = config_data['database']
             self.chunk_overlap_edit.clear()
             self.chunk_size_edit.clear()
 
