@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 import yaml
 from PySide6.QtCore import Signal, QObject, QThread, QTimer
-from PySide6.QtGui import QIntValidator, QDoubleValidator
+from PySide6.QtGui import QIntValidator, QDoubleValidator, QTextCursor
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QTextEdit, QPushButton, QHBoxLayout, QMessageBox, QApplication, QComboBox, QCheckBox, QLabel, QLineEdit
 import multiprocessing
 from db.database_interactions import process_chunks_only_query
@@ -309,7 +309,11 @@ class DatabaseQueryTab(QWidget):
             QApplication.processEvents()
 
     def display_citations(self, citations):
-        self.read_only_text.append("\n\nCitations:\n" + citations)
+        cursor = self.read_only_text.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.read_only_text.setTextCursor(cursor)
+        self.read_only_text.insertHtml("<br><br><b>Citations:</b><br>" + citations)
+        self.read_only_text.ensureCursorVisible()
         self.read_only_text.repaint()
         QApplication.processEvents()
 
