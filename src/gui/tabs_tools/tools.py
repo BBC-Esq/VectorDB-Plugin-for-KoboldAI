@@ -3,6 +3,7 @@ from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QColor
 from gui.tabs_tools.transcribe import TranscriberToolSettingsTab
 from gui.tabs_tools.vision import VisionToolSettingsTab
+from gui.tabs_tools.vision_settings import VisionSettingsTab
 from gui.tabs_tools.ocr import OCRToolSettingsTab
 
 class GuiSettingsTab(QWidget):
@@ -13,6 +14,7 @@ class GuiSettingsTab(QWidget):
         self._subtabs = []
         classes = {
             "TRANSCRIBE FILE": (TranscriberToolSettingsTab, 3),
+            "SELECT VISION MODEL": (VisionSettingsTab, 2),
             "TEST VISION MODELS": (VisionToolSettingsTab, 2),
             "OPTICAL CHARACTER RECOGNITION": (OCRToolSettingsTab, 2),
         }
