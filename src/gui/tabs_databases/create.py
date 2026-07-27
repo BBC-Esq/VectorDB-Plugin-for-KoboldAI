@@ -9,10 +9,10 @@ from pathlib import Path
 import yaml
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QRegularExpression, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QAction, QRegularExpressionValidator
-from PySide6.QtWidgets import QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox, QListView, QMenu, QGroupBox, QLabel, QLineEdit, QGridLayout, QSizePolicy, QComboBox
+from PySide6.QtWidgets import QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox, QListView, QMenu, QGroupBox, QLabel, QLineEdit, QGridLayout, QSizePolicy, QComboBox, QProgressDialog
 
 from db.database_interactions import create_vector_db_in_process
-from db.choose_documents import choose_documents_directory
+from db.choose_documents import choose_documents_directory, ALLOWED_EXTENSIONS, SymlinkWorker
 from core.utilities import check_preconditions_for_db_creation, open_file, delete_file, my_cprint, save_config_atomically
 from gui.download_model import model_downloaded_signal
 from core.constants import TOOLTIPS, PROJECT_ROOT
@@ -116,6 +116,69 @@ class VectorDBWorker(QThread):
                 pass
 
 
+class StagedFilesListView(QListView):
+    files_dropped = Signal(list, list, int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setDragDropMode(QListView.DropOnly)
+
+    @staticmethod
+    def _collect(urls):
+        top_level = []
+        subdirectory = []
+        skipped = 0
+        for url in urls:
+            if not url.isLocalFile():
+                continue
+            path = Path(url.toLocalFile())
+            if path.is_dir():
+                try:
+                    for child in path.iterdir():
+                        if child.is_file():
+                            if child.suffix.lower() in ALLOWED_EXTENSIONS:
+                                top_level.append(str(child))
+                            else:
+                                skipped += 1
+                    for child in path.rglob("*"):
+                        if (child.is_file() and child.parent != path
+                                and child.suffix.lower() in ALLOWED_EXTENSIONS):
+                            subdirectory.append(str(child))
+                except OSError:
+                    pass
+            elif path.is_file():
+                if path.suffix.lower() in ALLOWED_EXTENSIONS:
+                    top_level.append(str(path))
+                else:
+                    skipped += 1
+        return top_level, subdirectory, skipped
+
+    def _has_usable_payload(self, event):
+        mime = event.mimeData()
+        return bool(mime.hasUrls() and any(u.isLocalFile() for u in mime.urls()))
+
+    def dragEnterEvent(self, event):
+        if self._has_usable_payload(event):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if self._has_usable_payload(event):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        if not self._has_usable_payload(event):
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        top_level, subdirectory, skipped = self._collect(event.mimeData().urls())
+        self.files_dropped.emit(top_level, subdirectory, skipped)
+
+
 class StagedFilesModel(QAbstractListModel):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -141,6 +204,7 @@ class DatabasesTab(QWidget):
 
     def __init__(self):
         super().__init__()
+        self._staging_worker = None
         model_downloaded_signal.downloaded.connect(self.update_model_combobox)
         self.layout = QVBoxLayout(self)
         self.documents_group_box = self.create_group_box("Files To Add to Database", "Docs_for_DB")
@@ -386,7 +450,7 @@ class DatabasesTab(QWidget):
             return native_precision
 
     def setup_directory_view(self, directory_name):
-        list_view = QListView()
+        list_view = StagedFilesListView()
         model = StagedFilesModel(self)
         list_view.setModel(model)
         list_view.setSelectionMode(QListView.ExtendedSelection)
@@ -398,7 +462,68 @@ class DatabasesTab(QWidget):
         if directory_name == "Docs_for_DB":
             self.docs_list_model = model
             self.docs_list_view = list_view
+            list_view.setToolTip("Drag and drop files or folders here to add them to the database.")
+            list_view.files_dropped.connect(self.on_files_dropped)
         return list_view
+
+    def on_files_dropped(self, top_level, subdirectory, skipped):
+        if self._staging_worker is not None and self._staging_worker.isRunning():
+            QMessageBox.information(
+                self, "Staging In Progress",
+                "Files are still being staged. Wait for the current job to finish before adding more."
+            )
+            return
+
+        files = list(top_level)
+        if subdirectory:
+            reply = QMessageBox.question(
+                self, "Include Subdirectories?",
+                f"{len(top_level)} compatible file(s) were found at the top level and "
+                f"{len(subdirectory)} more in subdirectories.\n\nInclude the subdirectory files as well?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if reply == QMessageBox.Yes:
+                files.extend(subdirectory)
+
+        if not files:
+            QMessageBox.information(
+                self, "Nothing Added",
+                "None of the dropped items are supported file types."
+                + (f"\n\n{skipped} file(s) were skipped." if skipped else "")
+            )
+            return
+
+        target_dir = PROJECT_ROOT / "Docs_for_DB"
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        progress = QProgressDialog("Adding files...", "Cancel", 0, 0, self)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+
+        worker = SymlinkWorker(files, target_dir)
+        self._staging_worker = worker
+        progress.canceled.connect(worker.requestInterruption)
+
+        def update_progress(pct):
+            if progress.maximum() == 0:
+                progress.setRange(0, 100)
+            progress.setValue(pct)
+
+        def done(count, errors):
+            progress.reset()
+            self.refresh_staged_files()
+            self._staging_worker = None
+            msg = f"Added {count} file(s)."
+            if skipped:
+                msg += f"\n{skipped} unsupported file(s) were skipped."
+            if errors:
+                msg += f"\n{len(errors)} error(s) - see console."
+                print(*errors, sep="\n")
+            QMessageBox.information(self, "Files Added", msg)
+
+        worker.progress.connect(update_progress)
+        worker.finished.connect(done)
+        worker.start()
 
     def on_double_click(self, index):
         name = index.data(Qt.DisplayRole)
