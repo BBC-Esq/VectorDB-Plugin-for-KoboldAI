@@ -263,7 +263,7 @@ class DatabaseQueryTab(QWidget):
     def on_submit_button_clicked(self):
         if self.kobold_thread is not None and self.kobold_thread.isRunning():
             return
-        script_dir = Path(__file__).resolve().parent
+        script_dir = PROJECT_ROOT
         is_valid, error_message = check_preconditions_for_submit_question(script_dir)
         if not is_valid:
             QMessageBox.warning(self, "Error", error_message)

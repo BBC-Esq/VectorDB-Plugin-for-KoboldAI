@@ -10,9 +10,9 @@ from PySide6.QtCore import QThread, Signal, QObject
 
 from db.database_interactions import QueryVectorDB
 from core.utilities import format_citations, normalize_chat_text
-from core.constants import rag_string
+from core.constants import rag_string, PROJECT_ROOT
 
-ROOT_DIRECTORY = Path(__file__).resolve().parent
+ROOT_DIRECTORY = PROJECT_ROOT
 
 contexts_output_file_path = ROOT_DIRECTORY / "contexts.txt"
 metadata_output_file_path = ROOT_DIRECTORY / "metadata.txt"
@@ -162,7 +162,7 @@ class KoboldChat:
         try:
             full_response = self.connect_to_kobold(augmented_query)
 
-            with open('chat_history.txt', 'w', encoding='utf-8') as f:
+            with open(ROOT_DIRECTORY / 'chat_history.txt', 'w', encoding='utf-8') as f:
                 normalized_response = normalize_chat_text(full_response)
                 f.write(normalized_response)
 

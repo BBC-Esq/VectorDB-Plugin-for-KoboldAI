@@ -76,7 +76,7 @@ def clear_pickle_folder():
         shutil.rmtree(pickle_folder, ignore_errors=True)
 
 def delete_chat_history():
-    chat_history_path = Path(__file__).resolve().parent / 'chat_history.txt'
+    chat_history_path = Path(__file__).resolve().parent.parent / 'chat_history.txt'
     chat_history_path.unlink(missing_ok=True)
 
 def main():
