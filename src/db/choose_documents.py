@@ -6,7 +6,6 @@ from PySide6.QtCore import QElapsedTimer, QThread, Signal, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
-    QFileSystemModel,
     QHBoxLayout,
     QProgressDialog,
     QVBoxLayout,
@@ -64,7 +63,7 @@ class SymlinkWorker(QThread):
                 files = [
                     str(dir_path / filename)
                     for filename in filenames
-                    if (dir_path / filename).is_file()
+                    if (dir_path / filename).is_file() 
                     and (dir_path / filename).suffix.lower() in ALLOWED_EXTENSIONS
                 ]
             except OSError:
@@ -88,6 +87,9 @@ class SymlinkWorker(QThread):
                 for i, (ok, err) in enumerate(
                     pool.imap_unordered(_create_single_symlink, file_args), 1
                 ):
+                    if self.isInterruptionRequested():
+                        pool.terminate()
+                        break
                     if ok:
                         made += 1
                     if err:
@@ -119,6 +121,14 @@ class SymlinkWorker(QThread):
 
 
 def choose_documents_directory():
+    existing_worker = getattr(choose_documents_directory, "_symlink_thread", None)
+    if existing_worker is not None and existing_worker.isRunning():
+        QMessageBox.information(
+            None, "Staging In Progress",
+            "Files are still being staged. Wait for the current job to finish or cancel it before starting another."
+        )
+        return
+
     current_dir = PROJECT_ROOT
     target_dir = current_dir / DOCS_FOLDER
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -137,6 +147,8 @@ def choose_documents_directory():
     if clicked_button == cancel_button:
         return
 
+    file_dialog = QFileDialog()
+
     def start_worker(source):
         progress = QProgressDialog(
             "Creating symlinks...", "Cancel", 0, 0
@@ -146,15 +158,6 @@ def choose_documents_directory():
 
         worker = SymlinkWorker(source, target_dir)
         main_window = _get_main_window()
-        if main_window and hasattr(main_window, "databases_tab"):
-            db_tab = main_window.databases_tab
-            if hasattr(db_tab, "docs_model") and db_tab.docs_model:
-                if hasattr(QFileSystemModel, "DontWatchForChanges"):
-                    db_tab.docs_model.setOption(
-                        QFileSystemModel.DontWatchForChanges, True
-                    )
-                if hasattr(db_tab, "docs_refresh"):
-                    db_tab.docs_refresh.start()
 
         progress.canceled.connect(worker.requestInterruption)
 
@@ -168,17 +171,8 @@ def choose_documents_directory():
         def _done(count, errs):
             if main_window and hasattr(main_window, "databases_tab"):
                 db_tab = main_window.databases_tab
-                if hasattr(db_tab, "docs_refresh"):
-                    db_tab.docs_refresh.stop()
-                if hasattr(db_tab, "docs_model") and db_tab.docs_model:
-                    if hasattr(db_tab.docs_model, "refresh"):
-                        db_tab.docs_model.refresh()
-                    elif hasattr(db_tab.docs_model, "reindex"):
-                        db_tab.docs_model.reindex()
-                    if hasattr(QFileSystemModel, "DontWatchForChanges"):
-                        db_tab.docs_model.setOption(
-                            QFileSystemModel.DontWatchForChanges, False
-                        )
+                if hasattr(db_tab, "refresh_staged_files"):
+                    db_tab.refresh_staged_files()
 
             progress.reset()
             msg = f"Created {count} symlinks"
@@ -194,7 +188,9 @@ def choose_documents_directory():
         choose_documents_directory._symlink_thread = worker
 
     if clicked_button == dir_button:
-        selected_dir = QFileDialog.getExistingDirectory(
+        file_dialog.setFileMode(QFileDialog.Directory)
+        file_dialog.setOption(QFileDialog.ShowDirsOnly, True)
+        selected_dir = file_dialog.getExistingDirectory(
             None, "Choose Directory for Database", str(current_dir)
         )
         if selected_dir:
@@ -238,9 +234,10 @@ def choose_documents_directory():
                     "No compatible files were found in the selected directory."
                 )
     else:
-        file_paths, _ = QFileDialog.getOpenFileNames(
+        file_dialog.setFileMode(QFileDialog.ExistingFiles)
+        file_paths = file_dialog.getOpenFileNames(
             None, "Choose Documents and Images for Database", str(current_dir)
-        )
+        )[0]
         if file_paths:
             compatible_files = []
             incompatible_files = []
