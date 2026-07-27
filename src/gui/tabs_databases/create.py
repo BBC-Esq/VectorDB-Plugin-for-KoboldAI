@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QM
 
 from db.database_interactions import create_vector_db_in_process
 from db.choose_documents import choose_documents_directory
-from core.utilities import check_preconditions_for_db_creation, open_file, delete_file, backup_database, my_cprint, save_config_atomically
+from core.utilities import check_preconditions_for_db_creation, open_file, delete_file, my_cprint, save_config_atomically
 from gui.download_model import model_downloaded_signal
 from core.constants import TOOLTIPS, PROJECT_ROOT
 
@@ -504,7 +504,6 @@ class DatabasesTab(QWidget):
             elif success:
                 my_cprint(f"{self.current_model_name} removed from memory.", "red")
                 self.update_config_with_database_name()
-                backup_database(self.current_database_name)
                 QMessageBox.information(self, "Success", message)
             else:
                 QMessageBox.critical(self, "Error", message)

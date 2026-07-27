@@ -524,42 +524,6 @@ def save_config_atomically(config_data, config_path, **dump_kwargs):
         yaml.safe_dump(config_data, f, **dump_kwargs)
     os.replace(tmp, config_path)
 
-def backup_database(database_name=None):
-   source_directory = Path('Vector_DB')
-   backup_directory = Path('Vector_DB_Backup')
-
-   if database_name:
-       logging.debug("Starting incremental database backup")
-       backup_directory.mkdir(parents=True, exist_ok=True)
-       source_db_path = source_directory / database_name
-       backup_db_path = backup_directory / database_name
-       if backup_db_path.exists():
-           try:
-               shutil.rmtree(backup_db_path)
-           except Exception as e:
-               logging.debug(f"Failed to remove existing backup: {e}")
-               print(f"Warning: Could not remove existing backup of {database_name}: {e}")
-       try:
-           shutil.copytree(source_db_path, backup_db_path)
-           logging.debug(f"Successfully created backup of {database_name}")
-       except Exception as e:
-           logging.debug(f"Backup failed: {e}")
-           print(f"Error backing up {database_name}: {e}")
-   else:
-       logging.debug("Starting full database backup")
-       if backup_directory.exists():
-           for item in backup_directory.iterdir():
-               if item.is_dir():
-                   shutil.rmtree(item)
-               else:
-                   item.unlink()
-       else:
-           backup_directory.mkdir(parents=True, exist_ok=True)
-       shutil.copytree(source_directory, backup_directory, dirs_exist_ok=True)
-       logging.debug("Database backup completed successfully")
-
-
-
 def open_file(file_path):
     try:
         if platform.system() == "Windows":

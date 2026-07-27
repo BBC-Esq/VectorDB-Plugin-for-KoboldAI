@@ -118,10 +118,6 @@ class AppConfig(BaseSettings):
         return self.root_dir / "Vector_DB"
 
     @property
-    def vector_db_backup_dir(self) -> Path:
-        return self.root_dir / "Vector_DB_Backup"
-
-    @property
     def models_dir(self) -> Path:
         return self.root_dir / "Models"
 

@@ -216,7 +216,7 @@ class ManageDatabasesTab(QWidget):
 
                     base_dir = PROJECT_ROOT
                     deletion_failed = False
-                    for folder_name in ["Vector_DB", "Vector_DB_Backup"]:
+                    for folder_name in ["Vector_DB"]:
                         dir_path = base_dir / folder_name / selected_database
                         if dir_path.exists():
                             shutil.rmtree(dir_path, ignore_errors=True)
