@@ -1,72 +1,121 @@
-import threading
 from pathlib import Path
-import yaml
-from PySide6.QtCore import Qt
+import torch
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QFileDialog, QLabel, QComboBox, QSlider
+    QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QPushButton, QFileDialog, QLabel, QComboBox, QSlider, QSizePolicy
 )
 from modules.transcribe import WhisperTranscriber
-from core.utilities import my_cprint
-from core.constants import WHISPER_MODELS
+from core.utilities import my_cprint, has_bfloat16_support
+from core.constants import WHISPER_MODELS, TOOLTIPS
+
+
+class TranscriptionWorkerThread(QThread):
+    finished_signal = Signal(bool, str)
+
+    def __init__(self, model_key, batch_size, audio_file, parent=None):
+        super().__init__(parent)
+        self.model_key = model_key
+        self.batch_size = batch_size
+        self.audio_file = audio_file
+
+    def run(self):
+        try:
+            transcriber = WhisperTranscriber(
+                model_key=self.model_key,
+                batch_size=self.batch_size
+            )
+            transcriber.start_transcription_process(self.audio_file)
+            self.finished_signal.emit(True, "")
+        except Exception as e:
+            self.finished_signal.emit(False, str(e))
+
 
 class TranscriberToolSettingsTab(QWidget):
-    CONFIG_FILE = 'config.yaml'
-
     def __init__(self):
         super().__init__()
         self.selected_audio_file = None
+        self.worker_thread = None
         self.create_layout()
 
-    def read_config(self):
-        with open(self.CONFIG_FILE, 'r') as file:
-            return yaml.safe_load(file)
+    def set_buttons_enabled(self, enabled):
+        self.transcribe_button.setEnabled(enabled)
+        self.select_file_button.setEnabled(enabled)
 
     def create_layout(self):
         main_layout = QVBoxLayout()
-        model_selection_hbox = QHBoxLayout()
-        model_selection_hbox.addWidget(QLabel("Model"))
-        self.model_combo = QComboBox()
 
-        self.model_combo.addItems(WHISPER_MODELS.keys())
-        
-        model_selection_hbox.addWidget(self.model_combo)
-        model_selection_hbox.addWidget(QLabel("Batch:"))
-        self.slider_label = QLabel("8")
+        grid = QGridLayout()
+        grid.setColumnStretch(0, 2)
+        grid.setColumnStretch(1, 2)
+        grid.setColumnStretch(2, 1)
+
+        model_row = QHBoxLayout()
+        model_label = QLabel("Model")
+        model_label.setToolTip(TOOLTIPS["WHISPER_MODEL_SELECT"])
+        model_row.addWidget(model_label)
+
+        self.model_combo = QComboBox()
+        self.populate_model_combo()
+        self.model_combo.setToolTip(TOOLTIPS["WHISPER_MODEL_SELECT"])
+        model_row.addWidget(self.model_combo, 1)
+
+        grid.addLayout(model_row, 0, 0)
+
+        self.select_file_button = QPushButton("Select File")
+        self.select_file_button.clicked.connect(self.select_audio_file)
+        self.select_file_button.setToolTip(TOOLTIPS["AUDIO_FILE_SELECT"])
+        grid.addWidget(self.select_file_button, 0, 1)
+
+        self.transcribe_button = QPushButton("Transcribe")
+        self.transcribe_button.clicked.connect(self.start_transcription)
+        self.transcribe_button.setToolTip(TOOLTIPS["TRANSCRIBE_BUTTON"])
+        self.transcribe_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        grid.addWidget(self.transcribe_button, 0, 2, 2, 1)
+
+        batch_row = QHBoxLayout()
+        batch_label = QLabel("Batch:")
+        batch_label.setToolTip(TOOLTIPS["WHISPER_BATCH_SIZE"])
+        batch_row.addWidget(batch_label)
+
         self.number_slider = QSlider(Qt.Horizontal)
         self.number_slider.setMinimum(1)
         self.number_slider.setMaximum(150)
         self.number_slider.setValue(8)
         self.number_slider.valueChanged.connect(self.update_slider_label)
-        model_selection_hbox.addWidget(self.number_slider)
-        model_selection_hbox.addWidget(self.slider_label)
-        
-        model_selection_hbox.setStretchFactor(self.model_combo, 2)
-        model_selection_hbox.setStretchFactor(self.number_slider, 2)
-        
-        main_layout.addLayout(model_selection_hbox)
+        self.number_slider.setToolTip(TOOLTIPS["WHISPER_BATCH_SIZE"])
+        batch_row.addWidget(self.number_slider, 1)
 
-        hbox = QHBoxLayout()
-        self.select_file_button = QPushButton("Select Audio File")
-        self.select_file_button.clicked.connect(self.select_audio_file)
-        hbox.addWidget(self.select_file_button)
+        self.slider_label = QLabel("8")
+        self.slider_label.setToolTip(TOOLTIPS["WHISPER_BATCH_SIZE"])
+        batch_row.addWidget(self.slider_label)
 
-        self.transcribe_button = QPushButton("Transcribe")
-        self.transcribe_button.clicked.connect(self.start_transcription)
-        hbox.addWidget(self.transcribe_button)
+        grid.addLayout(batch_row, 1, 0, 1, 2)
 
-        main_layout.addLayout(hbox)
+        main_layout.addLayout(grid)
 
         self.file_path_label = QLabel("No file currently selected")
         main_layout.addWidget(self.file_path_label)
 
         self.setLayout(main_layout)
 
+    def populate_model_combo(self):
+        cuda_available = torch.cuda.is_available()
+        bfloat16_supported = has_bfloat16_support()
+
+        filtered_models = []
+        for model_name, model_info in WHISPER_MODELS.items():
+            precision = model_info['precision']
+            if precision == 'float32':
+                filtered_models.append(model_name)
+            elif precision == 'bfloat16' and bfloat16_supported:
+                filtered_models.append(model_name)
+            elif precision == 'float16' and cuda_available:
+                filtered_models.append(model_name)
+
+        self.model_combo.addItems(filtered_models)
+
     def update_slider_label(self, value):
         self.slider_label.setText(str(value))
-
-    def update_config_file(self):
-        with open(self.CONFIG_FILE, 'w') as file:
-            yaml.dump(self.config, file)
 
     def select_audio_file(self):
         current_dir = Path.cwd()
@@ -75,22 +124,37 @@ class TranscriberToolSettingsTab(QWidget):
             file_path = Path(file_name)
             short_path = f"...{file_path.parent.name}/{file_path.name}"
             self.file_path_label.setText(short_path)
+            self.file_path_label.setToolTip(str(file_path.absolute()))
             self.selected_audio_file = file_name
 
     def start_transcription(self):
         if not self.selected_audio_file:
             print("Please select an audio file.")
             return
-        
+
         selected_model_key = self.model_combo.currentText()
         selected_batch_size = int(self.slider_label.text())
-        
-        def transcription_thread():
-            transcriber = WhisperTranscriber(
-                model_key=selected_model_key, 
-                batch_size=selected_batch_size
-            )
-            transcriber.start_transcription_process(self.selected_audio_file)
+
+        self.set_buttons_enabled(False)
+
+        if self.worker_thread and self.worker_thread.isRunning():
+            self.worker_thread.wait()
+
+        self.worker_thread = TranscriptionWorkerThread(
+            selected_model_key, selected_batch_size, self.selected_audio_file
+        )
+        self.worker_thread.finished_signal.connect(self.transcription_finished)
+        self.worker_thread.start()
+
+    def transcription_finished(self, success, message):
+        self.set_buttons_enabled(True)
+
+        if self.worker_thread:
+            self.worker_thread.quit()
+            self.worker_thread.wait()
+            self.worker_thread = None
+
+        if success:
             my_cprint("Transcription created and ready to be input into vector database.", 'green')
-        
-        threading.Thread(target=transcription_thread, daemon=True).start()
+        else:
+            my_cprint(f"Transcription failed: {message}", 'red')
