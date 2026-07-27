@@ -1,14 +1,12 @@
 from PySide6.QtWidgets import QVBoxLayout, QGroupBox, QPushButton, QHBoxLayout, QWidget, QMessageBox
-from gui.tabs_settings.server import ServerSettingsTab
 from gui.tabs_settings.database_create import ChunkSettingsTab
 from gui.tabs_settings.database_query import DatabaseSettingsTab
 from gui.tabs_settings.vision import VisionSettingsTab
 
 def update_all_configs(configs):
     updated = False
-    for title, config in configs.items():
-        if title != "Kobold AI":
-            updated = config.update_config() or updated
+    for config in configs.values():
+        updated = config.update_config() or updated
     if updated:
         print("config.yaml file updated")
     
@@ -26,7 +24,6 @@ class GuiSettingsTab(QWidget):
         super(GuiSettingsTab, self).__init__()
         self.layout = QVBoxLayout()
         classes = {
-            "Kobold AI": (ServerSettingsTab, 3),
             "Database Query": (DatabaseSettingsTab, 2),
             "Database Creation": (ChunkSettingsTab, 1),
         }
