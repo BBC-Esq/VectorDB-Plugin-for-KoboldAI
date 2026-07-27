@@ -1,12 +1,21 @@
 import logging
 from pathlib import Path
 import yaml
-from PySide6.QtCore import Signal, QObject, QThread
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QTextEdit, QPushButton, QHBoxLayout, QMessageBox, QApplication, QComboBox, QCheckBox
+from PySide6.QtCore import Signal, QObject, QThread, QTimer
+from PySide6.QtGui import QIntValidator, QDoubleValidator
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QTextEdit, QPushButton, QHBoxLayout, QMessageBox, QApplication, QComboBox, QCheckBox, QLabel, QLineEdit
 import multiprocessing
 from db.database_interactions import process_chunks_only_query
-from core.utilities import check_preconditions_for_submit_question
+from core.utilities import check_preconditions_for_submit_question, save_config_atomically
+from core.constants import PROJECT_ROOT, TOOLTIPS
 from chat.kobold import KoboldChat, KoboldThread
+
+FILE_TYPE_MAP = {
+    "All Files": "",
+    "Images Only": "image",
+    "Documents Only": "document",
+    "Audio Only": "audio",
+}
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -56,7 +65,7 @@ class GuiSignals(QObject):
 class DatabaseQueryTab(QWidget):
     def __init__(self):
         super(DatabaseQueryTab, self).__init__()
-        self.config_path = Path(__file__).resolve().parent / "config.yaml"
+        self.config_path = PROJECT_ROOT / "config.yaml"
         self.gui_signals = GuiSignals()
         self.initWidgets()
         self.setup_signals()
@@ -68,6 +77,8 @@ class DatabaseQueryTab(QWidget):
         self.read_only_text = QTextEdit()
         self.read_only_text.setReadOnly(True)
         layout.addWidget(self.read_only_text, 5)
+        for row in self._build_settings_rows():
+            layout.addLayout(row)
         hbox1_layout = QHBoxLayout()
         self.database_pulldown = RefreshingComboBox(self)
         self.database_pulldown.addItems(self.load_created_databases())
@@ -85,6 +96,156 @@ class DatabaseQueryTab(QWidget):
         self.chunks_only_checkbox = QCheckBox("Chunks Only")
         hbox2_layout.addWidget(self.chunks_only_checkbox)
         layout.addLayout(hbox2_layout)
+
+    def _read_config(self):
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+        except Exception:
+            return {}
+
+    def _write_config(self, mutate):
+        config = self._read_config()
+        mutate(config)
+        save_config_atomically(config, self.config_path)
+
+    def _build_settings_rows(self):
+        config = self._read_config()
+        db_cfg = config.get("database") or {}
+        compute = config.get("Compute_Device") or {}
+
+        row1 = QHBoxLayout()
+
+        row1.addWidget(QLabel("Device:"))
+        self.query_device_combo = QComboBox()
+        available = compute.get("available") or ["cpu"]
+        self.query_device_combo.addItems(available)
+        current = compute.get("database_query", "cpu")
+        if current in available:
+            self.query_device_combo.setCurrentIndex(available.index(current))
+        self.query_device_combo.setToolTip(TOOLTIPS["CREATE_DEVICE_QUERY"])
+        self.query_device_combo.currentIndexChanged.connect(self._on_query_device_changed)
+        row1.addWidget(self.query_device_combo)
+        row1.addSpacing(12)
+
+        row1.addWidget(QLabel("Similarity:"))
+        self.similarity_edit = QLineEdit(str(db_cfg.get("similarity", 0.7)))
+        validator = QDoubleValidator(0.0, 1.0, 3, self)
+        validator.setNotation(QDoubleValidator.StandardNotation)
+        self.similarity_edit.setValidator(validator)
+        self.similarity_edit.setToolTip(TOOLTIPS["SIMILARITY"])
+        self.similarity_edit.setMaximumWidth(80)
+        self.similarity_edit.textEdited.connect(lambda: self._query_debounce.start())
+        row1.addWidget(self.similarity_edit)
+        row1.addSpacing(12)
+
+        row1.addWidget(QLabel("Contexts:"))
+        self.contexts_edit = QLineEdit(str(db_cfg.get("contexts", 5)))
+        self.contexts_edit.setValidator(QIntValidator(1, 1000, self))
+        self.contexts_edit.setToolTip(TOOLTIPS["CONTEXTS"])
+        self.contexts_edit.setMaximumWidth(80)
+        self.contexts_edit.textEdited.connect(lambda: self._query_debounce.start())
+        row1.addWidget(self.contexts_edit)
+        row1.addSpacing(12)
+
+        row1.addWidget(QLabel("File Type:"))
+        self.file_type_combo = QComboBox()
+        self.file_type_combo.addItems(list(FILE_TYPE_MAP.keys()))
+        stored = db_cfg.get("document_types", "")
+        for label, value in FILE_TYPE_MAP.items():
+            if value == stored:
+                self.file_type_combo.setCurrentIndex(list(FILE_TYPE_MAP.keys()).index(label))
+                break
+        self.file_type_combo.setToolTip(TOOLTIPS["FILE_TYPE_FILTER"])
+        self.file_type_combo.currentIndexChanged.connect(self._on_file_type_changed)
+        row1.addWidget(self.file_type_combo)
+        row1.addStretch(1)
+
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel("Search Filter:"))
+        self.search_term_edit = QLineEdit(db_cfg.get("search_term", "") or "")
+        self.search_term_edit.setPlaceholderText("Optional keyword that results must contain")
+        self.search_term_edit.setToolTip(TOOLTIPS["SEARCH_TERM_FILTER"])
+        self.search_term_edit.textEdited.connect(lambda: self._query_debounce.start())
+        row2.addWidget(self.search_term_edit, 1)
+        self.clear_filter_button = QPushButton("Clear Filter")
+        self.clear_filter_button.clicked.connect(self._on_clear_filter)
+        row2.addWidget(self.clear_filter_button)
+
+        self._query_debounce = QTimer(self)
+        self._query_debounce.setSingleShot(True)
+        self._query_debounce.setInterval(800)
+        self._query_debounce.timeout.connect(self._commit_query_settings)
+
+        return [row1, row2]
+
+    def _mark_invalid(self, widget, invalid):
+        widget.setStyleSheet("border: 1px solid #c0392b;" if invalid else "")
+
+    def _commit_query_settings(self):
+        similarity_text = self.similarity_edit.text().strip()
+        contexts_text = self.contexts_edit.text().strip()
+        search_term = self.search_term_edit.text().strip()
+
+        similarity = None
+        if similarity_text:
+            try:
+                similarity = float(similarity_text)
+            except ValueError:
+                similarity = None
+        bad_similarity = similarity is None or not (0.0 <= similarity <= 1.0)
+        self._mark_invalid(self.similarity_edit, bad_similarity)
+
+        contexts = None
+        if contexts_text:
+            try:
+                contexts = int(contexts_text)
+            except ValueError:
+                contexts = None
+        bad_contexts = contexts is None or not (1 <= contexts <= 1000)
+        self._mark_invalid(self.contexts_edit, bad_contexts)
+
+        if bad_similarity or bad_contexts:
+            return
+
+        current = self._read_config().get("database") or {}
+        if (current.get("similarity") == similarity
+                and current.get("contexts") == contexts
+                and (current.get("search_term") or "") == search_term):
+            return
+
+        def mutate(config):
+            db = config.setdefault("database", {})
+            db["similarity"] = similarity
+            db["contexts"] = contexts
+            db["search_term"] = search_term
+
+        self._write_config(mutate)
+
+    def _on_query_device_changed(self):
+        device = self.query_device_combo.currentText()
+
+        def mutate(config):
+            config.setdefault("Compute_Device", {})["database_query"] = device
+
+        self._write_config(mutate)
+
+    def _on_file_type_changed(self):
+        value = FILE_TYPE_MAP.get(self.file_type_combo.currentText(), "")
+
+        def mutate(config):
+            config.setdefault("database", {})["document_types"] = value
+
+        self._write_config(mutate)
+
+    def _on_clear_filter(self):
+        self.search_term_edit.clear()
+        self._mark_invalid(self.search_term_edit, False)
+
+        def mutate(config):
+            config.setdefault("database", {})["search_term"] = ""
+
+        self._write_config(mutate)
 
     def setup_signals(self):
         self.gui_signals.response_signal.connect(self.update_response)
