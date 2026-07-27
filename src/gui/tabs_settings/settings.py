@@ -1,5 +1,4 @@
 from PySide6.QtWidgets import QVBoxLayout, QGroupBox, QPushButton, QHBoxLayout, QWidget, QMessageBox
-from gui.tabs_settings.database_create import ChunkSettingsTab
 from gui.tabs_settings.database_query import DatabaseSettingsTab
 from gui.tabs_settings.vision import VisionSettingsTab
 
@@ -25,7 +24,6 @@ class GuiSettingsTab(QWidget):
         self.layout = QVBoxLayout()
         classes = {
             "Database Query": (DatabaseSettingsTab, 2),
-            "Database Creation": (ChunkSettingsTab, 1),
         }
         self.groups = {}
         self.configs = {}

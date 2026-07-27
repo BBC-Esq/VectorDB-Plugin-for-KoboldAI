@@ -8,8 +8,8 @@ import subprocess
 from pathlib import Path
 import yaml
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QRegularExpression, QThread, QTimer, Qt, Signal
-from PySide6.QtGui import QAction, QRegularExpressionValidator
-from PySide6.QtWidgets import QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox, QListView, QMenu, QGroupBox, QLabel, QLineEdit, QGridLayout, QSizePolicy, QComboBox, QProgressDialog
+from PySide6.QtGui import QAction, QRegularExpressionValidator, QIntValidator
+from PySide6.QtWidgets import QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox, QListView, QMenu, QGroupBox, QLabel, QLineEdit, QGridLayout, QSizePolicy, QComboBox, QProgressDialog, QCheckBox
 
 from db.database_interactions import create_vector_db_in_process
 from db.choose_documents import choose_documents_directory, ALLOWED_EXTENSIONS, SymlinkWorker
@@ -210,11 +210,7 @@ class DatabasesTab(QWidget):
         self.documents_group_box = self.create_group_box("Files To Add to Database", "Docs_for_DB")
         self.groups = {self.documents_group_box: 1}
 
-        self.info_label = QLabel()
-        self.info_label.setTextFormat(Qt.RichText)
-        self.info_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.info_label.setStyleSheet("padding: 4px 6px;")
-        self.layout.addWidget(self.info_label)
+        self.layout.addLayout(self._build_settings_row())
 
         grid_layout_top_buttons = QGridLayout()
         self.choose_docs_button = QPushButton("Choose Files")
@@ -264,10 +260,143 @@ class DatabasesTab(QWidget):
         self._config_mtime = None
         self._config_cache = {}
         self._refresh_info_label()
+        self._update_precision_label()
         self.info_refresh_timer = QTimer(self)
         self.info_refresh_timer.setInterval(1000)
         self.info_refresh_timer.timeout.connect(self._refresh_info_label)
         self.info_refresh_timer.start()
+
+    def _build_settings_row(self):
+        db_cfg = self._read_config().get("database") or {}
+        compute = self._read_config().get("Compute_Device") or {}
+
+        row = QHBoxLayout()
+
+        row.addWidget(QLabel("Device:"))
+        self.device_combo = QComboBox()
+        available = compute.get("available") or ["cpu"]
+        self.device_combo.addItems(available)
+        current_device = compute.get("database_creation", "cpu")
+        if current_device in available:
+            self.device_combo.setCurrentIndex(available.index(current_device))
+        self.device_combo.setToolTip(TOOLTIPS.get("CREATE_DEVICE_DB", "Device used to create the database."))
+        self.device_combo.currentIndexChanged.connect(self._on_device_changed)
+        row.addWidget(self.device_combo)
+        row.addSpacing(12)
+
+        row.addWidget(QLabel("Chunk Size:"))
+        self.chunk_size_edit = QLineEdit(str(db_cfg.get("chunk_size", 700)))
+        self.chunk_size_edit.setValidator(QIntValidator(1, 100000, self))
+        self.chunk_size_edit.setToolTip(TOOLTIPS["CHUNK_SIZE"])
+        self.chunk_size_edit.setMaximumWidth(90)
+        self.chunk_size_edit.textEdited.connect(self._on_chunk_text_edited)
+        row.addWidget(self.chunk_size_edit)
+        row.addSpacing(12)
+
+        row.addWidget(QLabel("Overlap:"))
+        self.chunk_overlap_edit = QLineEdit(str(db_cfg.get("chunk_overlap", 250)))
+        self.chunk_overlap_edit.setValidator(QIntValidator(0, 100000, self))
+        self.chunk_overlap_edit.setToolTip(TOOLTIPS["CHUNK_OVERLAP"])
+        self.chunk_overlap_edit.setMaximumWidth(90)
+        self.chunk_overlap_edit.textEdited.connect(self._on_chunk_text_edited)
+        row.addWidget(self.chunk_overlap_edit)
+        row.addSpacing(12)
+
+        self.half_checkbox = QCheckBox("Half-Precision")
+        self.half_checkbox.setChecked(bool(db_cfg.get("half", False)))
+        self.half_checkbox.setToolTip(TOOLTIPS["HALF_PRECISION"])
+        self.half_checkbox.toggled.connect(self._on_half_toggled)
+        row.addWidget(self.half_checkbox)
+
+        self.precision_label = QLabel()
+        self.precision_label.setTextFormat(Qt.RichText)
+        row.addWidget(self.precision_label)
+
+        row.addStretch(1)
+
+        self._chunk_debounce = QTimer(self)
+        self._chunk_debounce.setSingleShot(True)
+        self._chunk_debounce.setInterval(800)
+        self._chunk_debounce.timeout.connect(self._commit_chunk_settings)
+
+        self._half_cooldown = QTimer(self)
+        self._half_cooldown.setSingleShot(True)
+        self._half_cooldown.setInterval(600)
+        self._half_cooldown.timeout.connect(lambda: self.half_checkbox.setEnabled(True))
+
+        return row
+
+    @staticmethod
+    def _read_config():
+        config_path = PROJECT_ROOT / "config.yaml"
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+        except Exception:
+            return {}
+
+    def _write_config(self, mutate):
+        config = self._read_config()
+        mutate(config)
+        save_config_atomically(config, PROJECT_ROOT / "config.yaml")
+        self._config_mtime = None
+
+    def _on_device_changed(self):
+        device = self.device_combo.currentText()
+
+        def mutate(config):
+            config.setdefault("Compute_Device", {})["database_creation"] = device
+
+        self._write_config(mutate)
+        self._update_precision_label()
+
+    def _on_chunk_text_edited(self):
+        self._chunk_debounce.start()
+
+    def _mark_invalid(self, widget, invalid):
+        widget.setStyleSheet("border: 1px solid #c0392b;" if invalid else "")
+
+    def _commit_chunk_settings(self):
+        size_text = self.chunk_size_edit.text().strip()
+        overlap_text = self.chunk_overlap_edit.text().strip()
+
+        if not size_text or not overlap_text:
+            return
+
+        size = int(size_text)
+        overlap = int(overlap_text)
+
+        invalid = size <= 0 or overlap >= size
+        self._mark_invalid(self.chunk_size_edit, size <= 0)
+        self._mark_invalid(self.chunk_overlap_edit, overlap >= size)
+        if invalid:
+            return
+
+        current = self._read_config().get("database") or {}
+        if current.get("chunk_size") == size and current.get("chunk_overlap") == overlap:
+            return
+
+        def mutate(config):
+            db = config.setdefault("database", {})
+            db["chunk_size"] = size
+            db["chunk_overlap"] = overlap
+
+        self._write_config(mutate)
+
+    def _on_half_toggled(self, checked):
+        self.half_checkbox.setEnabled(False)
+
+        def mutate(config):
+            config.setdefault("database", {})["half"] = bool(checked)
+
+        self._write_config(mutate)
+        self._update_precision_label()
+        self._half_cooldown.start()
+
+    def _update_precision_label(self):
+        config = self._read_config()
+        precision = self._compute_precision_str(config, self.half_checkbox.isChecked())
+        self.precision_label.setText(f"<b>Precision:</b> {precision}")
 
     def _validation_failed(self, message: str):
         QMessageBox.warning(self, "Validation Failed", message)
@@ -397,20 +526,9 @@ class DatabasesTab(QWidget):
             self._config_cache = config
         config = self._config_cache
 
-        db_cfg = (config.get("database") or {})
-        chunk_size = db_cfg.get("chunk_size", "—")
-        chunk_overlap = db_cfg.get("chunk_overlap", "—")
-        use_half = bool(db_cfg.get("half", False))
-
-        precision_str = self._compute_precision_str(config, use_half)
-
-        text = (
-            f"<b>Files queued:</b> {file_count}"
-            f"&nbsp;&nbsp;|&nbsp;&nbsp;<b>Chunk size:</b> {chunk_size}"
-            f"&nbsp;&nbsp;|&nbsp;&nbsp;<b>Overlap:</b> {chunk_overlap}"
-            f"&nbsp;&nbsp;|&nbsp;&nbsp;<b>Embedding precision:</b> {precision_str}"
-        )
-        self.info_label.setText(text)
+        if getattr(self, "documents_group_box", None) is not None:
+            suffix = "1 file" if file_count == 1 else f"{file_count} files"
+            self.documents_group_box.setTitle(f"Files To Add to Database  —  {suffix}")
 
     def refresh_staged_files(self):
         self._docs_count_mtime = object()
