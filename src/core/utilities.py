@@ -185,34 +185,6 @@ def download_kokoro_tts():
             shutil.rmtree(tts_path)
         return False
 
-def download_kobold_executable():
-    import requests
-    from pathlib import Path
-
-    file_name = "koboldcpp-nocuda.exe"
-    url = f"https://github.com/LostRuins/koboldcpp/releases/latest/download/{file_name}"
-
-    script_dir = Path(__file__).parent
-    assets_dir = script_dir / "Assets"
-    assets_dir.mkdir(exist_ok=True)
-
-    kobold_path = assets_dir / file_name
-
-    try:
-        print(f"Downloading KoboldCPP from {url}...")
-        response = requests.get(url)
-        response.raise_for_status()
-        with open(kobold_path, 'wb') as file:
-            file.write(response.content)
-        print(f"KoboldCPP downloaded successfully to {kobold_path}")
-        return True
-    except requests.exceptions.HTTPError as http_err:
-        print(f"HTTP error occurred while downloading KoboldCPP: {http_err}")
-        return False
-    except Exception as e:
-        print(f"Failed to download KoboldCPP: {e}")
-        return False
-
 def normalize_chat_text(text):
     def split_num(num):
         num = num.group()

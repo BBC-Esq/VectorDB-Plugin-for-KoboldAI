@@ -286,7 +286,6 @@ libs = [
     "propcache==0.5.2",
     "protobuf==6.33.6",  # capped at 6.x: opentelemetry-proto (even latest 1.42.1) caps protobuf<7.0; 7.x blocked until opentelemetry raises it (googleapis 1.75.0 + onnx already allow 7)
     "psutil==7.2.2",
-    "py-cpuinfo==9.0.0",
     "pyarrow==24.0.0",
     "pyclipper==1.4.0",
     "pycparser==3.0",  # major 2->3; transitive (cffi dep, not used in app code); cffi accepts any pycparser
