@@ -135,56 +135,6 @@ def check_pdfs_for_ocr(script_dir):
     return True, ""
 
 
-class DownloadSignals(QObject):
-    finished = Signal(bool, str)
-    progress = Signal(str)
-
-class DownloadRunnable(QRunnable):
-    def __init__(self, download_func, *args):
-        super().__init__()
-        self.download_func = download_func
-        self.args = args
-        self.signals = DownloadSignals()
-
-    def run(self):
-        try:
-            result = self.download_func(*self.args)
-            self.signals.finished.emit(result, "Download completed successfully")
-        except Exception as e:
-            self.signals.finished.emit(False, str(e))
-
-def download_with_threadpool(download_func, *args, callback=None):
-    runnable = DownloadRunnable(download_func, *args)
-    if callback:
-        runnable.signals.finished.connect(callback)
-    QThreadPool.globalInstance().start(runnable)
-
-def download_kokoro_tts():
-    from pathlib import Path
-    from huggingface_hub import snapshot_download
-    import shutil
-
-    repo_id = "ctranslate2-4you/Kokoro-82M-light"
-    tts_path = Path(__file__).parent / "Models" / "tts" / "ctranslate2-4you--Kokoro-82M-light"
-
-    try:
-        tts_path.parent.mkdir(parents=True, exist_ok=True)
-
-        print(f"Downloading Kokoro TTS model from {repo_id}...")
-        snapshot_download(
-            repo_id=repo_id,
-            local_dir=str(tts_path),
-            max_workers=4
-        )
-        print("Kokoro TTS model downloaded successfully")
-        return True
-
-    except Exception as e:
-        print(f"Failed to download Kokoro TTS model: {e}")
-        if tts_path.exists():
-            shutil.rmtree(tts_path)
-        return False
-
 def normalize_chat_text(text):
     def split_num(num):
         num = num.group()

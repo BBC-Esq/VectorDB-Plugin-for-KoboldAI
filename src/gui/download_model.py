@@ -231,18 +231,3 @@ class ModelDownloader(QObject):
                     pass
             model_downloaded_signal.failed.emit(msg)
 
-def download_embedding_model(repo_id, local_dir=None):
-    info = {"repo_id": repo_id}
-    downloader = ModelDownloader(info, "vector")
-    if local_dir:
-        downloader._model_directory = Path(local_dir)
-        downloader.local_dir = downloader.get_model_directory()
-    downloader.download()
-
-def download_chat_model(repo_id, local_dir=None):
-    info = {"repo_id": repo_id}
-    downloader = ModelDownloader(info, "chat")
-    if local_dir:
-        downloader._model_directory = Path(local_dir)
-        downloader.local_dir = downloader.get_model_directory()
-    downloader.download()
