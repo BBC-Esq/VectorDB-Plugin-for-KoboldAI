@@ -57,7 +57,7 @@ class CreateDatabaseThread(QThread):
         backup_database_incremental(self.database_name)
 
     def update_config_with_database_name(self):
-        config_path = Path(__file__).resolve().parent / "config.yaml"
+        config_path = PROJECT_ROOT / "config.yaml"
         if config_path.exists():
             with open(config_path, 'r', encoding='utf-8') as file:
                 config = yaml.safe_load(file) or {}
@@ -148,7 +148,7 @@ class DatabasesTab(QWidget):
         self.model_combobox.clear()
         self.model_combobox.addItem("Select a model", None)
 
-        script_dir = Path(__file__).resolve().parent
+        script_dir = PROJECT_ROOT
         vector_dir = script_dir / "Models" / "vector"
 
         if not vector_dir.exists():
@@ -167,7 +167,7 @@ class DatabasesTab(QWidget):
             print(f"Warning: No model directories found in {vector_dir}")
 
     def sync_combobox_with_config(self):
-        config_path = Path(__file__).resolve().parent / "config.yaml"
+        config_path = PROJECT_ROOT / "config.yaml"
         if config_path.exists():
             with open(config_path, 'r', encoding='utf-8') as file:
                 config_data = yaml.safe_load(file) or {}
@@ -187,7 +187,7 @@ class DatabasesTab(QWidget):
 
     def on_model_selected(self, index):
         selected_path = self.model_combobox.itemData(index)
-        config_path = Path(__file__).resolve().parent / "config.yaml"
+        config_path = PROJECT_ROOT / "config.yaml"
         config_data = {}
 
         if config_path.exists():
@@ -290,7 +290,7 @@ class DatabasesTab(QWidget):
 
         database_name = self.database_name_input.text().strip()
         model_name = self.model_combobox.currentText()
-        script_dir = Path(__file__).resolve().parent
+        script_dir = PROJECT_ROOT
 
         checks_passed, message = check_preconditions_for_db_creation(script_dir, database_name)
 
