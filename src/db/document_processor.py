@@ -4,17 +4,16 @@ import logging
 import warnings
 import datetime
 import hashlib
-import re
 from pathlib import Path
-from dataclasses import dataclass, field
-from typing import List, Tuple, Optional
+from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 
 import fitz
 from bs4 import BeautifulSoup
 
-from core.utilities import normalize_text
+from core.text_utils import normalize_text
 from core.constants import SUPPORTED_EXTENSIONS, PIPELINE_PRESETS
+from db.text_splitter import Document, FixedSizeTextSplitter, add_pymupdf_page_metadata
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -34,12 +33,6 @@ def _get_ingest_params():
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class Document:
-    page_content: str = ""
-    metadata: dict = field(default_factory=dict)
-
-
 def compute_content_hash(content: str) -> str:
     return hashlib.sha256(content.encode('utf-8')).hexdigest()
 
@@ -55,7 +48,7 @@ def compute_file_hash(file_path):
 def extract_document_metadata(file_path, content_hash=None):
     file_path = os.path.realpath(file_path)
     file_name = os.path.basename(file_path)
-    file_type = os.path.splitext(file_path)[1]
+    file_type = os.path.splitext(file_path)[1].lower()
     creation_date = datetime.datetime.fromtimestamp(os.path.getctime(file_path)).isoformat()
     modification_date = datetime.datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat()
     file_hash = content_hash if content_hash else compute_file_hash(file_path)
@@ -88,7 +81,7 @@ def _load_docx(file_path: Path) -> Optional[str]:
 
 
 def _load_txt(file_path: Path) -> Optional[str]:
-    encodings = ["utf-8", "utf-8-sig", "latin-1", "cp1252"]
+    encodings = ["utf-8", "utf-8-sig", "cp1252", "latin-1"]
     for enc in encodings:
         try:
             with open(file_path, "r", encoding=enc) as f:
@@ -100,22 +93,22 @@ def _load_txt(file_path: Path) -> Optional[str]:
 
 
 def _load_csv(file_path: Path) -> Optional[str]:
-    rows = []
-    encodings = ["utf-8", "utf-8-sig", "latin-1", "cp1252"]
+    encodings = ["utf-8", "utf-8-sig", "cp1252", "latin-1"]
     for enc in encodings:
+        rows = []
         try:
             with open(file_path, "r", encoding=enc, newline="") as f:
                 reader = csv.reader(f)
                 for row in reader:
                     rows.append(" ".join(row))
-            break
+            return "\n".join(rows) if rows else None
         except UnicodeDecodeError:
             continue
-    return "\n".join(rows) if rows else None
+    return None
 
 
 def _load_html(file_path: Path) -> Optional[str]:
-    encodings = ["utf-8", "utf-8-sig", "latin-1", "cp1252"]
+    encodings = ["utf-8", "utf-8-sig", "cp1252", "latin-1"]
     for enc in encodings:
         try:
             with open(file_path, "r", encoding=enc) as f:
@@ -212,7 +205,7 @@ def _load_xlsx(file_path: Path) -> Optional[str]:
 def _load_rtf(file_path: Path) -> Optional[str]:
     from striprtf.striprtf import rtf_to_text
 
-    encodings = ["utf-8", "utf-8-sig", "latin-1", "cp1252"]
+    encodings = ["utf-8", "utf-8-sig", "cp1252", "latin-1"]
     for enc in encodings:
         try:
             with open(file_path, "r", encoding=enc) as f:
@@ -225,7 +218,7 @@ def _load_rtf(file_path: Path) -> Optional[str]:
 
 
 def _load_md(file_path: Path) -> Optional[str]:
-    encodings = ["utf-8", "utf-8-sig", "latin-1", "cp1252"]
+    encodings = ["utf-8", "utf-8-sig", "cp1252", "latin-1"]
     for enc in encodings:
         try:
             with open(file_path, "r", encoding=enc) as f:
@@ -253,12 +246,19 @@ LOADER_MAP = {
 }
 
 
+def _safe_print(message):
+    try:
+        print(message)
+    except UnicodeEncodeError:
+        print(message.encode("ascii", "replace").decode("ascii"))
+
+
 def load_single_document(file_path: Path) -> Optional[Document]:
     file_extension = file_path.suffix.lower()
     loader_fn = LOADER_MAP.get(file_extension)
 
     if not loader_fn:
-        print(f"\033[91mFailed---> {file_path.name} (extension: {file_extension})\033[0m")
+        _safe_print(f"\033[91mFailed---> {file_path.name} (extension: {file_extension})\033[0m")
         logger.error(f"Unsupported file type: {file_path.name} (extension: {file_extension})")
         return None
 
@@ -266,21 +266,21 @@ def load_single_document(file_path: Path) -> Optional[Document]:
         content = loader_fn(file_path)
 
         if not content:
-            print(f"\033[91mFailed---> {file_path.name} (No content extracted)\033[0m")
+            _safe_print(f"\033[91mFailed---> {file_path.name} (No content extracted)\033[0m")
             logger.error(f"No content extracted: {file_path.name}")
             return None
 
         content_hash = compute_content_hash(content)
         metadata = extract_document_metadata(file_path, content_hash)
-        print(f"Loaded---> {file_path.name}")
+        _safe_print(f"Loaded---> {file_path.name}")
         return Document(page_content=content, metadata=metadata)
 
     except (OSError, UnicodeDecodeError) as e:
-        print(f"\033[91mFailed---> {file_path.name} (Access/encoding error)\033[0m")
+        _safe_print(f"\033[91mFailed---> {file_path.name} (Access/encoding error)\033[0m")
         logger.error(f"File access/encoding error - File: {file_path.name} - Error: {str(e)}")
         return None
     except Exception as e:
-        print(f"\033[91mFailed---> {file_path.name} (Unexpected error)\033[0m")
+        _safe_print(f"\033[91mFailed---> {file_path.name} (Unexpected error)\033[0m")
         logger.error(f"Unexpected error processing file: {file_path.name} - Error: {type(e).__name__}: {str(e)}")
         logging.exception("Full traceback:")
         return None
@@ -340,7 +340,7 @@ def load_documents(source_dir: Path) -> list:
                 executor.shutdown(wait=True, cancel_futures=True)
     else:
         n_procs = min(ingest_processes, len(doc_paths))
-        logger.info(f"Loading {len(doc_paths)} documents with {n_procs} processes · {THREADS_PER_PROCESS} threads each")
+        logger.info(f"Loading {len(doc_paths)} documents with {n_procs} processes \u00b7 {THREADS_PER_PROCESS} threads each")
 
         chunks = [[] for _ in range(n_procs)]
         for i, chunk in enumerate(doc_paths):
@@ -361,118 +361,6 @@ def load_documents(source_dir: Path) -> list:
             raise
 
     return docs
-
-
-class FixedSizeTextSplitter:
-    def __init__(self, chunk_size: int, chunk_overlap: int = 0):
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
-
-    def split_documents(self, docs: List[Document]) -> List[Document]:
-        chunks: List[Document] = []
-        step = self.chunk_size - self.chunk_overlap
-        if step <= 0:
-            step = 1
-
-        for doc in docs:
-            text = doc.page_content
-
-            if text is None:
-                logger.warning("Skipping document with None page_content")
-                continue
-
-            if isinstance(text, (list, tuple)):
-                text = " ".join(str(item) for item in text if item)
-                logger.warning("Flattened list/tuple page_content to string")
-
-            if not isinstance(text, str):
-                text = str(text)
-
-            text = text.strip()
-
-            if not text:
-                logger.warning("Skipping document with empty page_content")
-                continue
-
-            for start in range(0, len(text), step):
-                piece = text[start:start + self.chunk_size].strip()
-
-                if not piece:
-                    continue
-
-                metadata = doc.metadata if doc.metadata else {}
-                chunks.append(Document(page_content=piece, metadata=dict(metadata)))
-
-        return chunks
-
-
-def add_pymupdf_page_metadata(doc: Document, chunk_size: int = 1200, chunk_overlap: int = 600) -> List[Document]:
-    def split_text(text: str, chunk_size: int, chunk_overlap: int) -> List[Tuple[str, int]]:
-        if text is None:
-            return []
-
-        if isinstance(text, (list, tuple)):
-            text = " ".join(str(item) for item in text if item)
-
-        if not isinstance(text, str):
-            text = str(text)
-
-        page_markers = []
-        offset = 0
-        for m in re.finditer(r'\[\[page(\d+)\]\]', text):
-            marker_len = len(m.group(0))
-            page_markers.append((m.start() - offset, int(m.group(1))))
-            offset += marker_len
-
-        clean_text = re.sub(r'\[\[page\d+\]\]', '', text)
-
-        chunks = []
-        start = 0
-        while start < len(clean_text):
-            end = start + chunk_size
-            if end > len(clean_text):
-                end = len(clean_text)
-            chunk = clean_text[start:end].strip()
-
-            page_num = None
-            for marker_pos, page in reversed(page_markers):
-                if marker_pos <= start:
-                    page_num = page
-                    break
-
-            if chunk and page_num is not None:
-                chunks.append((chunk, page_num))
-            elif chunk and page_num is None:
-                chunks.append((chunk, 1))
-
-            start += chunk_size - chunk_overlap
-
-        return chunks
-
-    text = doc.page_content
-
-    if text is None:
-        logger.warning("Skipping PDF document with None page_content")
-        return []
-
-    chunks = split_text(text, chunk_size, chunk_overlap)
-
-    if not chunks:
-        logger.warning("No chunks created from PDF document")
-        return []
-
-    new_docs = []
-    for chunk, page_num in chunks:
-        if not chunk or not chunk.strip():
-            continue
-
-        new_metadata = doc.metadata.copy() if doc.metadata else {}
-        new_metadata['page_number'] = page_num
-
-        new_doc = Document(page_content=chunk, metadata=new_metadata)
-        new_docs.append(new_doc)
-
-    return new_docs
 
 
 def split_documents(documents=None, text_documents_pdf=None, chunk_size=None, chunk_overlap=None):

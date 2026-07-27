@@ -1,12 +1,23 @@
 import faulthandler
 faulthandler.enable()
 
+# Module-level TileDB DLL preload. Mirrors the approach in VectorDB-Light's
+# vector_db_query.py (lines 1-31). Critical for subprocesses spawned via
+# multiprocessing.Process (e.g. the chunks-only query path): when the
+# fresh interpreter imports this module, the DLLs load immediately —
+# before any other code can accidentally trigger a tiledb.vector_search
+# import without DLL registration, which on Windows causes the
+# _tiledbvspy native module to fail with
+#   ImportError: DLL load failed while importing _tiledbvspy
+# or an even worse silent hang. The standalone _setup_tiledb_dlls()
+# function below is kept for the creation subprocess path, where DLL
+# setup has to happen after configure_logging() / set_cuda_paths().
 import os
 import sys
 import ctypes
 
 try:
-    import tiledb as _tiledb_bootstrap
+    import tiledb as _tiledb_bootstrap  # noqa: F401
 
     _venv_root = os.path.dirname(os.path.dirname(sys.executable))
     _site_packages = os.path.join(_venv_root, "Lib", "site-packages")
@@ -36,12 +47,16 @@ try:
             except Exception:
                 pass
 except ImportError:
+    # tiledb not installed — will fail later at actual use. Don't block
+    # the import itself in case this module is loaded for non-TileDB work
+    # (e.g. tests that only exercise pure helpers).
     pass
 
 import gc
 import json
 import logging
 import pickle
+import random
 import re
 import shutil
 import subprocess
@@ -55,6 +70,16 @@ from typing import Optional
 import numpy as np
 import torch
 
+# Compatibility shim: numpy 2.4.0 removed the top-level np.in1d (deprecated since numpy 2.0), but
+# tiledb-vector-search 0.16.0 still calls it in ingest_flat, which crashes database creation.
+# np.isin is numpy's exact drop-in replacement.
+# REMOVE THIS SHIM once tiledb-vector-search switches np.in1d -> np.isin (a future release will fix it upstream).
+if not hasattr(np, "in1d"):
+    np.in1d = np.isin
+
+# orjson is a Rust-based JSON encoder that's ~10x faster than stdlib json
+# and avoids the heap fragmentation that triggers OverflowError + access
+# violation when serializing millions of metadata dicts in tight loops.
 try:
     import orjson
 
@@ -68,7 +93,7 @@ from db.document_processor import Document
 from db.embedding_models import load_embedding_model
 from db.sqlite_operations import create_metadata_db
 from db.cuda_manager import get_cuda_manager
-from core.config import get_config
+from core.config import get_config, reload_config
 from core.constants import PROJECT_ROOT, PIPELINE_PRESETS
 from core.utilities import my_cprint, set_cuda_paths, configure_logging
 
@@ -79,10 +104,12 @@ os.environ.setdefault("RUST_BACKTRACE", "1")
 
 STAGE_EXTRACT_PATH = PROJECT_ROOT / "db" / "stage_extract.py"
 STAGE_SPLIT_PATH = PROJECT_ROOT / "db" / "stage_split.py"
+STAGE_WRITE_PATH = PROJECT_ROOT / "db" / "stage_write.py"
 
 EXTRACT_MAX_RETRIES = 3
 SPLIT_MAX_WORKER_RETRIES = 3
 SPLIT_MAX_RETRIES = 5
+WRITE_MAX_RETRIES = 5
 TILEDB_WRITE_BATCH_SIZE = 100000
 
 MAX_UINT64_SENTINEL = np.iinfo(np.uint64).max
@@ -105,19 +132,15 @@ def _run_subprocess_stage(name, cmd, timeout=3600):
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         bufsize=1,
         cwd=str(PROJECT_ROOT),
-        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"},
     )
 
-    output_lines = []
-    for line in process.stdout:
-        line = line.rstrip("\n")
-        if line.strip():
-            logger.info(f"  [{name}] {line}")
-            output_lines.append(line)
-
-    process.wait(timeout=timeout)
+    from db.subprocess_utils import drain_subprocess
+    output_lines = drain_subprocess(process, timeout, on_line=lambda line: logger.info(f"  [{name}] {line}"))
 
     if process.returncode != 0:
         for line in output_lines[-10:]:
@@ -165,7 +188,6 @@ def _run_split_with_retry(extracted_pkl, chunks_pkl, chunk_size, chunk_overlap, 
             "--max-worker-retries", str(SPLIT_MAX_WORKER_RETRIES),
             "--max-parallel-workers", str(split_parallel),
             "--checkpoint-dir", str(checkpoint_dir),
-            "--checkpoint-interval", "5",
         ]
 
         exit_code, _ = _run_subprocess_stage(f"Split (attempt {attempt})", split_cmd)
@@ -184,7 +206,37 @@ def _run_split_with_retry(extracted_pkl, chunks_pkl, chunk_size, chunk_overlap, 
     raise RuntimeError(f"Split stage failed after {SPLIT_MAX_RETRIES} attempts")
 
 
+def _run_write_with_retry(persist_dir, data_dir):
+    python = sys.executable
+    cmd = [python, str(STAGE_WRITE_PATH), str(persist_dir), str(data_dir)]
+    mappings_pkl = Path(data_dir) / "hash_id_mappings.pkl"
+
+    for attempt in range(1, WRITE_MAX_RETRIES + 1):
+        logger.info(f"Write attempt {attempt}/{WRITE_MAX_RETRIES}")
+        if mappings_pkl.exists():
+            try:
+                mappings_pkl.unlink()
+            except Exception:
+                pass
+
+        exit_code, _ = _run_subprocess_stage(f"Write (attempt {attempt})", cmd)
+
+        if exit_code == 0 and mappings_pkl.exists():
+            logger.info(f"Write stage completed on attempt {attempt}")
+            return
+
+        logger.error(f"Write attempt {attempt} failed (exit code {exit_code})")
+
+        if attempt < WRITE_MAX_RETRIES:
+            logger.info("Waiting 3 seconds before retry...")
+            time.sleep(3)
+            gc.collect()
+
+    raise RuntimeError(f"Write stage failed after {WRITE_MAX_RETRIES} attempts")
+
+
 def _setup_tiledb_dlls():
+    import ctypes
     import tiledb
 
     venv_root = os.path.dirname(os.path.dirname(sys.executable))
@@ -347,6 +399,13 @@ class CreateVectorDB:
             start = batch_idx * TILEDB_WRITE_BATCH_SIZE
             end = min(start + TILEDB_WRITE_BATCH_SIZE, num_vectors)
 
+            # Use numpy's vectorized generator instead of a Python list
+            # comprehension over random.randint. The list-comprehension
+            # approach allocated end-start Python int objects per batch
+            # (~7+ GB total at the Caselaw scale), which triggered an
+            # OverflowError + access violation inside random.randint on
+            # Python 3.12. numpy's integers() runs entirely in C and
+            # returns a uint64 array directly.
             batch_ids = rng.integers(
                 low=0,
                 high=np.iinfo(np.uint64).max,
@@ -356,21 +415,36 @@ class CreateVectorDB:
             )
             all_ids[start:end] = batch_ids
 
+            # Build all id strings in one C-level call instead of ~1.9M per-item str() calls, to reduce write-loop heap churn.
+            batch_id_strs = batch_ids.astype(str).tolist()
             for i in range(start, end):
                 file_hash = metadatas[i].get('hash', '')
-                hash_id_mappings.append((str(batch_ids[i - start]), file_hash))
+                hash_id_mappings.append((batch_id_strs[i - start], file_hash))
 
             batch_vectors = vectors_array[start:end]
             batch_texts = np.array(texts[start:end], dtype=object)
-            batch_metadata = np.array(
-                [_json_dumps(metadatas[i]) for i in range(start, end)],
-                dtype=object
-            )
+            # _json_dumps uses orjson when available (Rust-based, ~10x faster
+            # than stdlib json). The stdlib json.dumps loop here triggered an
+            # OverflowError + access violation at the Caselaw scale due to
+            # heap fragmentation from millions of small string allocations.
+            # Consecutive-dedup: a file's chunks are consecutive with identical metadata, so reuse
+            # the prior JSON string when the dict is unchanged (cuts serializations ~1.9M -> ~125K).
+            batch_meta_strs = []
+            prev_meta = None
+            prev_meta_str = None
+            for i in range(start, end):
+                meta = metadatas[i]
+                if prev_meta_str is not None and meta == prev_meta:
+                    batch_meta_strs.append(prev_meta_str)
+                else:
+                    prev_meta_str = _json_dumps(meta)
+                    prev_meta = meta
+                    batch_meta_strs.append(prev_meta_str)
+            batch_metadata = np.array(batch_meta_strs, dtype=object)
 
-            batch_structured = np.array(
-                [tuple(vec) for vec in batch_vectors],
-                dtype=[("", np.float32)] * embedding_dim
-            )
+            batch_structured = np.ascontiguousarray(batch_vectors).view(
+                [("", np.float32)] * embedding_dim
+            ).reshape(-1)
 
             with tiledb.open(array_uri, mode='w') as A:
                 A[batch_ids] = {
@@ -453,8 +527,10 @@ class CreateVectorDB:
         chunks_pkl = tmp_path / "chunks.pkl"
         checkpoint_dir = tmp_path / "checkpoints"
         checkpoint_dir.mkdir(exist_ok=True)
+        created_persist_dir = False
 
         try:
+            # Stage 1: Extract documents via subprocess
             my_cprint("Extracting documents (subprocess)...", "yellow")
             extract_t0 = time.time()
             _run_extract_with_retry(self.SOURCE_DIRECTORY, extracted_pkl)
@@ -492,12 +568,14 @@ class CreateVectorDB:
                 my_cprint("No documents, audio transcripts, or images found to process.", "red")
                 raise RuntimeError("No content found to ingest into the database.")
 
+            # Re-write extracted.pkl with audio+image docs included
             with open(extracted_pkl, "wb") as f:
                 pickle.dump(doc_data, f, protocol=pickle.HIGHEST_PROTOCOL)
 
             del doc_data
             gc.collect()
 
+            # Stage 2: Split documents via subprocess
             my_cprint("Splitting documents into chunks (subprocess)...", "yellow")
             split_t0 = time.time()
             _run_split_with_retry(extracted_pkl, chunks_pkl, chunk_size, chunk_overlap, checkpoint_dir)
@@ -525,8 +603,9 @@ class CreateVectorDB:
 
             if not chunk_texts:
                 my_cprint("No chunks produced after splitting.", "red")
-                return
+                raise RuntimeError("No chunks were produced after splitting; nothing to ingest.")
 
+            # Extract metadata dicts from chunks_with_meta, then free it
             all_metadatas = []
             for idx in range(len(chunk_texts)):
                 if idx < len(chunks_with_meta):
@@ -538,6 +617,7 @@ class CreateVectorDB:
             del chunks_with_meta
             gc.collect()
 
+            # Stage 3+4: Tokenize + Embed via subprocess pipeline
             with cuda_mgr.cuda_operation():
                 embeddings = self.initialize_vector_model(EMBEDDING_MODEL_NAME, config_data)
 
@@ -546,6 +626,7 @@ class CreateVectorDB:
 
             try:
                 self.PERSIST_DIRECTORY.mkdir(parents=True, exist_ok=False)
+                created_persist_dir = True
                 my_cprint(f"Created directory: {self.PERSIST_DIRECTORY}", "green")
             except FileExistsError:
                 raise FileExistsError(
@@ -573,8 +654,37 @@ class CreateVectorDB:
             del vectors
             gc.collect()
 
+            # Stage 5: Write TileDB array + FLAT index in an isolated subprocess
+            num_vectors = vectors_array.shape[0]
+            embedding_dim = vectors_array.shape[1]
+            num_write_batches = (num_vectors + TILEDB_WRITE_BATCH_SIZE - 1) // TILEDB_WRITE_BATCH_SIZE
+
+            write_data_dir = tmp_path / "write_data"
+            write_data_dir.mkdir(exist_ok=True)
+            np.save(write_data_dir / "vectors.npy", vectors_array)
+            for b in range(num_write_batches):
+                bstart = b * TILEDB_WRITE_BATCH_SIZE
+                bend = min(bstart + TILEDB_WRITE_BATCH_SIZE, num_vectors)
+                with open(write_data_dir / f"shard_{b:05d}.pkl", "wb") as f:
+                    pickle.dump(
+                        {"texts": chunk_texts[bstart:bend], "metadatas": all_metadatas[bstart:bend]},
+                        f, protocol=pickle.HIGHEST_PROTOCOL,
+                    )
+            with open(write_data_dir / "meta.json", "w", encoding="utf-8") as f:
+                json.dump({
+                    "embedding_dim": embedding_dim,
+                    "num_vectors": num_vectors,
+                    "batch_size": TILEDB_WRITE_BATCH_SIZE,
+                    "num_batches": num_write_batches,
+                }, f)
+
+            del vectors_array, chunk_texts, all_metadatas
+            gc.collect()
+
             try:
-                hash_id_mappings = self._create_tiledb_array(chunk_texts, vectors_array, all_metadatas)
+                _run_write_with_retry(self.PERSIST_DIRECTORY, write_data_dir)
+                with open(write_data_dir / "hash_id_mappings.pkl", "rb") as f:
+                    hash_id_mappings = pickle.load(f)
             except Exception as e:
                 logger.error(f"Error creating TileDB database: {e}")
                 traceback.print_exc()
@@ -590,10 +700,20 @@ class CreateVectorDB:
             pipeline_elapsed = time.time() - pipeline_t0
             my_cprint(f"Database created. Total time: {pipeline_elapsed:.2f} seconds.", "green")
 
-            del chunk_texts, vectors_array, all_metadatas
+            # Stage 6: Write SQLite metadata DB
             gc.collect()
 
-            create_metadata_db(self.PERSIST_DIRECTORY, json_docs_to_save, hash_id_mappings)
+            try:
+                create_metadata_db(self.PERSIST_DIRECTORY, json_docs_to_save, hash_id_mappings)
+            except Exception as e:
+                logger.error(f"Error creating SQLite metadata DB: {e}")
+                traceback.print_exc()
+                if self.PERSIST_DIRECTORY.exists():
+                    try:
+                        shutil.rmtree(self.PERSIST_DIRECTORY)
+                    except Exception:
+                        pass
+                raise
             del json_docs_to_save, hash_id_mappings
             gc.collect()
 
@@ -601,6 +721,8 @@ class CreateVectorDB:
 
         except Exception:
             traceback.print_exc()
+            if created_persist_dir and self.PERSIST_DIRECTORY.exists():
+                shutil.rmtree(self.PERSIST_DIRECTORY, ignore_errors=True)
             raise
         finally:
             try:
@@ -613,6 +735,11 @@ _thread_local = threading.local()
 
 
 def get_query_db(database_name: str) -> "QueryVectorDB":
+    """Return a thread-local QueryVectorDB instance, creating it if needed.
+
+    Each thread gets its own cache of database name → QueryVectorDB, so
+    concurrent queries against different databases don't thrash singleton state.
+    """
     if not hasattr(_thread_local, "query_db_cache"):
         _thread_local.query_db_cache = {}
 
@@ -625,6 +752,7 @@ def get_query_db(database_name: str) -> "QueryVectorDB":
 
 
 def clear_query_cache(database_name: Optional[str] = None) -> None:
+    """Clear the thread-local QueryVectorDB cache for the current thread."""
     if not hasattr(_thread_local, "query_db_cache"):
         return
 
@@ -676,7 +804,7 @@ class QueryVectorDB:
 
     def load_configuration(self):
         try:
-            return get_config()
+            return reload_config()
         except Exception as e:
             logger.error(f"Error loading configuration: {e}")
             raise
@@ -694,7 +822,8 @@ class QueryVectorDB:
         )
 
     @torch.inference_mode()
-    def search(self, query, k: Optional[int] = None, score_threshold: Optional[float] = None):
+    def search(self, query, k: Optional[int] = None, score_threshold: Optional[float] = None,
+               search_term: Optional[str] = None, document_types: Optional[str] = None):
         _setup_tiledb_dlls()
         import tiledb
         import tiledb.vector_search as vs
@@ -712,6 +841,8 @@ class QueryVectorDB:
         self.config = self.load_configuration()
         k = k if k is not None else self.config.database.contexts
         score_threshold = score_threshold if score_threshold is not None else self.config.database.similarity
+        search_term = search_term if search_term is not None else self.config.database.search_term
+        document_types = document_types if document_types is not None else self.config.database.document_types
 
         with cuda_mgr.cuda_operation():
             query_vector = self.embeddings.embed_query(query)
@@ -806,7 +937,7 @@ class QueryVectorDB:
                     logger.warning(f"Failed to retrieve data for vector ID {vec_id}: {e}")
                     continue
 
-        search_term = self.config.database.search_term.lower()
+        search_term = (search_term or "").lower()
         if search_term:
             filtered_results = [
                 (text, metadata) for text, metadata in results
@@ -815,7 +946,6 @@ class QueryVectorDB:
         else:
             filtered_results = results
 
-        document_types = self.config.database.document_types
         if document_types:
             filtered_results = [
                 (text, metadata) for text, metadata in filtered_results

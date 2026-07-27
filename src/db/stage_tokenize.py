@@ -10,6 +10,7 @@ import tempfile
 import time
 from pathlib import Path
 
+# Ensure project root is on sys.path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 logging.basicConfig(
@@ -184,9 +185,12 @@ def save_checkpoint(checkpoint_path, data):
             time.sleep(0.2)
 
 
-def run_worker(python_exe, worker_script_path, texts_pkl, output_pkl,
-               model_path, batch_size, max_seq_length, use_fast,
-               global_start_index, encode_batch_size, length_sort, timeout=600):
+def run_worker(python_exe: str, worker_script_path: str,
+               texts_pkl: str, output_pkl: str,
+               model_path: str, batch_size: int, max_seq_length: int,
+               use_fast: bool, global_start_index: int,
+               encode_batch_size: int, length_sort: bool,
+               timeout: int = 600) -> tuple:
     cmd = [
         python_exe, worker_script_path,
         texts_pkl, output_pkl,
@@ -204,20 +208,14 @@ def run_worker(python_exe, worker_script_path, texts_pkl, output_pkl,
         bufsize=1,
         env={**os.environ, "PYTHONUNBUFFERED": "1"},
     ) as process:
-        output_lines = []
-        for line in process.stdout:
-            line = line.rstrip("\n")
-            if line.strip():
-                logger.warning(f"  [worker] {line}")
-                output_lines.append(line)
-
-        process.wait(timeout=timeout)
+        from db.subprocess_utils import drain_subprocess
+        drain_subprocess(process, timeout, on_line=lambda line: logger.warning(f"  [worker] {line}"))
         elapsed = time.time() - t0
         returncode = process.returncode
     return returncode, elapsed
 
 
-def get_physical_core_count():
+def get_physical_core_count() -> int:
     try:
         import psutil
         count = psutil.cpu_count(logical=False)
@@ -232,7 +230,7 @@ def get_physical_core_count():
 def run_worker_with_retries(worker_id, total_workers, python_exe, worker_script_path,
                             chunk_texts, global_start, worker_dir, model_path,
                             batch_size, max_seq_length, use_fast, max_retries,
-                            encode_batch_size, length_sort):
+                            encode_batch_size, length_sort) -> dict:
     num_texts = len(chunk_texts)
     chunk_pkl = worker_dir / f"_worker_input_{worker_id}.pkl"
     result_pkl = worker_dir / f"_worker_output_{worker_id}.pkl"

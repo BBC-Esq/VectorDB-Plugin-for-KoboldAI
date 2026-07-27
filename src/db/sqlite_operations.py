@@ -1,4 +1,5 @@
 import sqlite3
+from pathlib import Path
 
 
 def create_metadata_db(persist_directory, documents, hash_id_mappings):

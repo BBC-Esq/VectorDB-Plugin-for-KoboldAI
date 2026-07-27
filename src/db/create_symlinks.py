@@ -1,19 +1,47 @@
+import hashlib
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
 from typing import Union, List, Tuple
 
+
+def _points_to(link_path: Path, source_path) -> bool:
+    try:
+        return link_path.is_symlink() and link_path.resolve() == Path(source_path).resolve()
+    except Exception:
+        return False
+
+
+def _try_symlink(link_path: Path, source_path) -> str:
+    try:
+        link_path.symlink_to(source_path)
+        return "created"
+    except FileExistsError:
+        return "ours" if _points_to(link_path, source_path) else "collision"
+
+
 def _create_single_symlink(args):
     source_path, target_dir = args
     try:
-        link_path = Path(target_dir) / Path(source_path).name
-        if not link_path.exists():
-            link_path.symlink_to(source_path)
+        source = Path(source_path)
+        target = Path(target_dir)
+        link_path = target / source.name
+        outcome = _try_symlink(link_path, source_path)
+        if outcome == "created":
             return True, None
+        if outcome == "ours":
+            return False, None
+        suffix_hash = hashlib.md5(str(source).encode("utf-8")).hexdigest()[:8]
+        disambiguated = target / f"{source.stem}_{suffix_hash}{source.suffix}"
+        outcome = _try_symlink(disambiguated, source_path)
+        if outcome == "created":
+            return True, None
+        if outcome == "ours":
+            return False, None
+        return False, f"Symlink collision could not be resolved for {source.name}"
     except Exception as e:
         return False, f"Error creating symlink for {Path(source_path).name}: {str(e)}"
-    return False, None
 
-def create_symlinks_parallel(source: Union[str, Path, List[str], List[Path]],
+def create_symlinks_parallel(source: Union[str, Path, List[str], List[Path]], 
                            target_dir: Union[str, Path] = "Docs_for_DB") -> Tuple[int, list]:
     target_dir = Path(target_dir)
     if not target_dir.exists():
@@ -49,7 +77,7 @@ def create_symlinks_parallel(source: Union[str, Path, List[str], List[Path]],
 
         count = sum(1 for success, _ in results if success)
         errors = [error for _, error in results if error is not None]
-
+        
         print(f"\nComplete! Created {count} symbolic links")
         if errors:
             print("\nErrors occurred:")
