@@ -59,16 +59,12 @@ def update_config_file(**system_info):
 
 def check_for_necessary_folders():
     folders = [
-        "Assets",
         "Docs_for_DB",
         "Vector_DB",
         "Models",
         "Models/vector",
-        "Models/chat",
-        "Models/tts",
         "Models/vision",
         "Models/whisper",
-        "Scraped_Documentation",
     ]
 
     for folder in folders:
