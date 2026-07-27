@@ -1,7 +1,9 @@
+import functools
 import gc
 import logging
 import os
 import pickle
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -24,6 +26,29 @@ from core.utilities import (
 logger = logging.getLogger(__name__)
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+# torch.compile (ModernBERT's reference_compile) needs MSVC's cl.exe on Windows; detect it silently so
+# compilation is only enabled when it will actually build (otherwise it falls back to eager/sdpa).
+_MSVC_AVAILABLE = shutil.which("cl") is not None
+
+
+@functools.lru_cache(maxsize=None)
+def _model_supports_flash(model_path: str) -> bool:
+    try:
+        import json
+        from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+        from transformers.models.auto.modeling_auto import MODEL_MAPPING
+        model_type = json.loads((Path(model_path) / "config.json").read_text(encoding="utf-8")).get("model_type")
+        if not model_type or model_type not in CONFIG_MAPPING:
+            return False
+        model_cls = MODEL_MAPPING[CONFIG_MAPPING[model_type]]
+        flag = getattr(model_cls, "_supports_flash_attn", None)
+        if flag is None:
+            flag = getattr(model_cls, "_supports_flash_attn_2", False)
+        return bool(flag)
+    except Exception:
+        return False
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STAGE_TOKENIZE_PATH = PROJECT_ROOT / "db" / "stage_tokenize.py"
@@ -48,10 +73,14 @@ def _get_tokenize_parallel_workers():
 
 def _get_model_family(model_path: str) -> str:
     model_path_lower = model_path.lower()
-    if "qwen" in model_path_lower or "qwen3-embedding" in model_path_lower:
+    if "harrier" in model_path_lower:
+        return "harrier"
+    if "qwen" in model_path_lower or "qwen3-embedding" in model_path_lower or "octen" in model_path_lower:
         return "qwen"
     if "bge" in model_path_lower:
         return "bge"
+    if "modernbert" in model_path_lower:
+        return "modernbert"
     return "generic"
 
 
@@ -86,11 +115,19 @@ def _normalize_text(text: str) -> str:
 
 
 ENCODE_BATCH_SIZE_BY_MODEL = {
+    "harrier-oss-v1-270m": 50,
+    "harrier-oss-v1-0.6b": 14,
     "bge-small-en-v1.5": 100,
     "bge-base-en-v1.5": 80,
     "bge-large-en-v1.5": 50,
-    "Qwen3-Embedding-0.6B": 10,
-    "Qwen3-Embedding-4B": 5,
+    "Qwen3-Embedding-0.6B": 14,
+    "Qwen3-Embedding-4B": 6,
+    "Qwen3-Embedding-8B": 2,
+    "Octen-Embedding-0.6B": 14,
+    "Octen-Embedding-4B": 6,
+    "Octen-Embedding-8B": 2,
+    "modernbert-embed-base_finetune_512": 50,
+    "modernbert-embed-base_finetune_8192": 20,
 }
 
 
@@ -103,7 +140,7 @@ def _get_encode_batch_size(device: str, model_path: str = "") -> int:
 
     if device.startswith("cuda"):
         try:
-            gpu_props = torch.cuda.get_device_properties(0)
+            gpu_props = torch.cuda.get_device_properties(device)
             vram_gb = gpu_props.total_memory / (1024 ** 3)
             batch_size = max(10, min(256, int(vram_gb * 4)))
             logger.info(f"  ENCODE_BATCH_SIZE: {batch_size} (VRAM fallback, "
@@ -130,14 +167,8 @@ def _run_subprocess_stage(name, cmd, cwd, timeout=3600):
         env={**os.environ, "PYTHONUNBUFFERED": "1"},
     )
 
-    output_lines = []
-    for line in process.stdout:
-        line = line.rstrip("\n")
-        if line.strip():
-            logger.info(f"  [{name}] {line}")
-            output_lines.append(line)
-
-    process.wait(timeout=timeout)
+    from db.subprocess_utils import drain_subprocess
+    output_lines = drain_subprocess(process, timeout, on_line=lambda line: logger.info(f"  [{name}] {line}"))
 
     if process.returncode != 0:
         for line in output_lines[-10:]:
@@ -266,6 +297,9 @@ def _run_tokenize_with_retry(
         time.sleep(3)
         gc.collect()
 
+    if not all_batches:
+        raise RuntimeError(f"Tokenize stage failed after {TOKENIZE_MAX_RETRIES} attempts")
+
     total_tokens = total_real_tokens + total_pad_tokens
     efficiency_pct = (total_real_tokens / total_tokens * 100) if total_tokens > 0 else 100.0
 
@@ -305,6 +339,14 @@ class DirectEmbeddingModel:
 
         self._initialize_model()
 
+    def _resolve_padding_side(self, family):
+        if family == "qwen":
+            return "left"
+        return None
+
+    def _extra_tokenizer_kwargs(self):
+        return {}
+
     def _initialize_model(self):
         family = _get_model_family(self.model_path)
 
@@ -313,20 +355,29 @@ class DirectEmbeddingModel:
         }
 
         is_cuda = self.device.lower().startswith("cuda")
-        if family == "qwen":
-            if is_cuda and supports_flash_attention():
-                model_kwargs["attn_implementation"] = "flash_attention_2"
-            else:
-                model_kwargs["attn_implementation"] = "sdpa"
+        is_half = self.dtype in (torch.float16, torch.bfloat16)
+        config_kwargs = {}
+
+        if is_cuda and is_half and supports_flash_attention() and _model_supports_flash(self.model_path):
+            model_kwargs["attn_implementation"] = "flash_attention_2"
         else:
             model_kwargs["attn_implementation"] = "sdpa"
+
+        # Force sdpa for now. flash-attn was NOT the cause of the earlier large-build crashes (that was numpy 2.4.6, now pinned to 2.3.4); this is kept only out of caution. To re-enable adaptive flash-attention-2 selection, delete this line.
+        model_kwargs["attn_implementation"] = "sdpa"
+
+        if family == "modernbert":
+            config_kwargs["reference_compile"] = _MSVC_AVAILABLE
 
         tokenizer_kwargs = {
             "model_max_length": self.max_seq_length,
         }
 
-        if family == "qwen":
-            tokenizer_kwargs["padding_side"] = "left"
+        padding_side = self._resolve_padding_side(family)
+        if padding_side is not None:
+            tokenizer_kwargs["padding_side"] = padding_side
+
+        tokenizer_kwargs.update(self._extra_tokenizer_kwargs())
 
         self.model = SentenceTransformer(
             model_name_or_path=self.model_path,
@@ -334,6 +385,7 @@ class DirectEmbeddingModel:
             trust_remote_code=True,
             model_kwargs=model_kwargs,
             tokenizer_kwargs=tokenizer_kwargs,
+            config_kwargs=config_kwargs,
         )
 
         self.model.max_seq_length = self.max_seq_length
@@ -364,9 +416,9 @@ class DirectEmbeddingModel:
         return np.asarray(embeddings, dtype=np.float32)
 
     @torch.inference_mode()
-    def embed_documents(self, texts: list) -> np.ndarray:
+    def embed_documents(self, texts: list) -> tuple:
         if not texts:
-            return np.array([], dtype=np.float32)
+            return np.array([], dtype=np.float32), np.array([], dtype=np.int64)
 
         total = len(texts)
         logger.info(f"Embedding {total} texts via subprocess tokenization pipeline")
@@ -452,14 +504,20 @@ class DirectEmbeddingModel:
             logger.info(f"Forward pass complete: {batch_count} batches processed")
 
             if not all_embeddings:
-                return np.array([], dtype=np.float32)
+                return np.array([], dtype=np.float32), np.array([], dtype=np.int64)
 
             sorted_embeddings = np.concatenate(all_embeddings, axis=0)
             indices = np.concatenate(all_seq_indices, axis=0)
-            result = np.empty_like(sorted_embeddings)
-            result[indices] = sorted_embeddings
-            logger.info(f"Unsorting embeddings: restored original order via seq_indices")
-            return result
+            order = np.argsort(indices)
+            result = sorted_embeddings[order]
+            surviving_indices = indices[order]
+            if len(surviving_indices) != total:
+                logger.warning(
+                    f"{total - len(surviving_indices)} of {total} texts were dropped during "
+                    f"tokenization; embedding the surviving {len(surviving_indices)}."
+                )
+            logger.info("Restored original chunk order via seq_indices")
+            return result, surviving_indices
 
         finally:
             import shutil
@@ -489,6 +547,28 @@ class DirectEmbeddingModel:
             self.tokenizer = None
 
 
+class HarrierEmbeddingModel(DirectEmbeddingModel):
+    QUERY_PROMPT = "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: "
+    MAX_SEQ_LENGTH = 8192
+    PADDING_SIDE = "left"
+
+    def __init__(self, model_path, device="cpu", dtype=None, batch_size=8, is_query=False):
+        super().__init__(
+            model_path=model_path,
+            device=device,
+            dtype=dtype,
+            batch_size=batch_size,
+            max_seq_length=self.MAX_SEQ_LENGTH,
+            prompt=self.QUERY_PROMPT if is_query else "",
+        )
+
+    def _resolve_padding_side(self, family):
+        return self.PADDING_SIDE
+
+    def _extra_tokenizer_kwargs(self):
+        return {"fix_mistral_regex": False}
+
+
 def create_embedding_model(
     model_path: str,
     compute_device: str = "cpu",
@@ -514,8 +594,19 @@ def create_embedding_model(
     final_dtype = dtype if dtype is not None else _dtype
     final_batch_size = batch_size if batch_size is not None else _batch_size
 
+    if family == "harrier":
+        return HarrierEmbeddingModel(
+            model_path=model_path,
+            device=compute_device,
+            dtype=final_dtype,
+            batch_size=final_batch_size,
+            is_query=is_query,
+        )
+
     if family == "qwen":
         max_seq_length = 8192
+    elif family == "modernbert":
+        max_seq_length = 8192 if "8192" in model_name else 512
     else:
         max_seq_length = 512
 

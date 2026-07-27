@@ -994,21 +994,23 @@ def get_embedding_batch_size(model_name: str, compute_device: str) -> int:
         return 2
 
     batch_size_mapping = {
-        'inf-retriever-v1-7b': 2,
+        'harrier-oss-v1-0.6b': 4,
+        'harrier-oss-v1-270m': 10,
         'Qwen3-Embedding-8B': 2,
         'Qwen3-Embedding-4B': 3,
-        'inf-retriever-v1-1.5b': 3,
         'Qwen3-Embedding-0.6B': 4,
+        'Octen-Embedding-8B': 2,
+        'Octen-Embedding-4B': 3,
+        'Octen-Embedding-0.6B': 4,
         'e5-base': 6,
         'e5-large': 7,
-        'arctic-embed-l': 7,
         'bge-large-en-v1.5': 6,
         'e5-small': 10,
-        'Granite-30m-English': 12,
+        'gte-large': 12,
         'bge-small': 12,
         'bge-small-en-v1.5': 12,
         'bge-base-en-v1.5': 8,
-        'arctic-embed-m': 14,
+        'gte-base': 14,
     }
 
     model_name_lower = model_name.lower()

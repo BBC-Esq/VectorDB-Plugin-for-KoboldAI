@@ -23,11 +23,11 @@ class VectorModelsTab(QWidget):
        self.stretch_factors = {
            'BAAI': 4,
            'Google': 2,
-           'IBM': 3,
-           'infly': 3,
+           'Microsoft': 3,
            'intfloat': 4,
            'Qwen': 4,
-           'Snowflake': 3,
+           'Octen': 4,
+           'FreeLawProject': 3,
        }
 
        models_dir = Path('Models')
