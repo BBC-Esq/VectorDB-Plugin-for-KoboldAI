@@ -1,5 +1,4 @@
-# --- Local-only working folder (release notes, kobold reference clone, etc.) ---
-DEVELOPMENT/
+# --- Local-only test folder ---
 tests/
 
 # --- Python venv (root or src/) ---
