@@ -65,6 +65,9 @@ class ThinkingTagFilter:
         self._buffer = ""
         return out
 
+    def ended_mid_thought(self) -> bool:
+        return self._in_think
+
 class KoboldChat:
     def __init__(self):
         self.signals = KoboldSignals()
@@ -80,7 +83,7 @@ class KoboldChat:
         payload = {
             "prompt": augmented_query,
             "max_context_length": 4096,
-            "max_length": 512,
+            "max_length": 1536,
             "temperature": 0.1,
             "top_p": 0.9,
             "rep_pen": 1.1,
@@ -118,6 +121,21 @@ class KoboldChat:
             if tail:
                 self.signals.response_signal.emit(tail)
                 full_response += tail
+
+            if not full_response.strip():
+                if think_filter.ended_mid_thought():
+                    notice = (
+                        "[The model ran out of response length while still reasoning and never "
+                        "produced an answer. Its entire output was internal thinking, which is "
+                        "hidden. Try asking a narrower question, or raise max_length in "
+                        "chat/kobold.py.]"
+                    )
+                else:
+                    notice = "[The model returned an empty response.]"
+                logging.warning(f"Empty visible response; ended_mid_thought="
+                                f"{think_filter.ended_mid_thought()}")
+                self.signals.response_signal.emit(notice)
+                full_response = notice
 
             return full_response
         except Exception as e:
