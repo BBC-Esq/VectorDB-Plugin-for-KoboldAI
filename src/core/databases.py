@@ -17,6 +17,7 @@ import yaml
 
 from core.constants import (
     BUILD_COMPLETE_MARKER, DB_FOLDER_CREATED_MARKER, NOT_ADDED_MARKER, PROJECT_ROOT, VECTOR_MODELS, VISION_MODELS,
+    WIKI_DATABASE,
 )
 from core.locks import exclusive
 from core.settings import CONFIG_PATH, read_config, update_config
@@ -51,6 +52,24 @@ def database_files(name):
         conn.close()
 
 
+def missing_model_problem(name):
+    from core.downloads import is_vector_model_downloaded, vector_model_for_path
+
+    model_path = (list_databases().get(name) or {}).get("model")
+    if not model_path:
+        return None
+    model = vector_model_for_path(model_path)
+    if model is None:
+        if Path(model_path).is_dir():
+            return None
+        return (f"'{name}' was created with the embedding model {Path(model_path).name}, which is no longer on this "
+                "computer or offered by this program. Create the database again with a current model.")
+    if is_vector_model_downloaded(model):
+        return None
+    return (f"'{name}' needs the embedding model {model['name']}, which isn't downloaded yet. Download it by running "
+            f"this in the program's src folder: python cli.py download {model['name']}")
+
+
 def register_database(name, model=None, chunk_size=None, chunk_overlap=None):
     def mutate(config):
         db_settings = config.get("database") or {}
@@ -76,6 +95,8 @@ def delete_database(name):
         if isinstance(created, dict):
             created.pop(name, None)
         config.setdefault("database", {})["database_to_search"] = ""
+        if name == WIKI_DATABASE:
+            config["wiki_removed"] = True
 
     update_config(mutate)
     dir_path = VECTOR_DB_DIR / name
@@ -226,9 +247,11 @@ def _remove_temp_root(path):
 
 
 class DatabaseBuild:
-    def __init__(self, database_name, chunk_size=None):
+    def __init__(self, database_name, chunk_size=None, model=None, source_dir=None):
         self.database_name = database_name
         self.requested_chunk_size = chunk_size
+        self.requested_model = model
+        self.source_dir = source_dir
         self.process = None
         self.cancelled = False
         self.completed = False
@@ -246,13 +269,17 @@ class DatabaseBuild:
         from core.settings import build_chunking
 
         config = read_config()
-        self.model = config.get("EMBEDDING_MODEL_NAME")
+        self.model = self.requested_model or config.get("EMBEDDING_MODEL_NAME")
         self.chunk_size, self.chunk_overlap = build_chunking(self.requested_chunk_size, config)
         temp_root = tempfile.mkdtemp(prefix="vectordb_build_")
         exit_code = -1
         try:
             env = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8", "TMPDIR": temp_root,
                    "VECTORDB_CHUNK_SIZE": str(self.chunk_size), "VECTORDB_CHUNK_OVERLAP": str(self.chunk_overlap)}
+            if self.model:
+                env["VECTORDB_EMBEDDING_MODEL"] = str(self.model)
+            if self.source_dir is not None:
+                env["VECTORDB_SOURCE_DIR"] = str(self.source_dir)
             self.process = subprocess.Popen(
                 build_command(self.database_name),
                 stdout=subprocess.PIPE,

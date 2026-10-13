@@ -83,6 +83,14 @@ MIN_CHUNK_SIZE = 100
 
 MAX_CHUNK_SIZE = 30000
 
+WIKI_DATABASE = "kobold_wiki"
+WIKI_MODEL = "Yuan-embedding-2.0-en"
+WIKI_CHUNK_SIZE = 900
+WIKI_URL = "https://raw.githubusercontent.com/wiki/LostRuins/koboldcpp/Home.md"
+WIKI_DIR = PROJECT_ROOT / "wiki"
+WIKI_FILE = WIKI_DIR / "koboldcpp_wiki.md"
+WIKI_ZIP = WIKI_DIR / "kobold_wiki.zip"
+
 priority_libs = {
     "cp311": {
         "GPU": [

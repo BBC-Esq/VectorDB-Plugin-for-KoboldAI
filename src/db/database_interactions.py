@@ -350,7 +350,7 @@ def process_chunks_only_query(database_name, query, result_queue):
 class CreateVectorDB:
     def __init__(self, database_name):
         self.config = get_config()
-        self.SOURCE_DIRECTORY = self.config.docs_dir
+        self.SOURCE_DIRECTORY = Path(os.environ.get("VECTORDB_SOURCE_DIR") or self.config.docs_dir)
         self.PERSIST_DIRECTORY = self.config.vector_db_dir / database_name
 
     @torch.inference_mode()
@@ -527,7 +527,7 @@ class CreateVectorDB:
         pipeline_t0 = time.time()
 
         config_data = get_config()
-        EMBEDDING_MODEL_NAME = config_data.EMBEDDING_MODEL_NAME
+        EMBEDDING_MODEL_NAME = os.environ.get("VECTORDB_EMBEDDING_MODEL") or config_data.EMBEDDING_MODEL_NAME
         chunk_size = int(os.environ.get("VECTORDB_CHUNK_SIZE") or config_data.database.chunk_size)
         chunk_overlap = int(os.environ.get("VECTORDB_CHUNK_OVERLAP") or config_data.database.chunk_overlap)
 
@@ -766,7 +766,8 @@ class CreateVectorDB:
                     _print_safe(f"  - {entry}", "red")
                 print(NOT_ADDED_MARKER + json.dumps(not_added), flush=True)
 
-            self.clear_docs_for_db_folder()
+            if self.SOURCE_DIRECTORY == self.config.docs_dir:
+                self.clear_docs_for_db_folder()
 
         except Exception:
             traceback.print_exc()

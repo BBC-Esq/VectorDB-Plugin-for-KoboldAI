@@ -102,7 +102,7 @@ def choose_image_loader(model_config: dict | None = None, return_timing: bool = 
     loader_class = globals()[loader_name]
     loader = loader_class(model_config)
 
-    image_dir = PROJECT_ROOT / "Docs_for_DB"
+    image_dir = Path(os.environ.get("VECTORDB_SOURCE_DIR") or PROJECT_ROOT / "Docs_for_DB")
     if not check_for_images(image_dir):
         return ([], 0.0) if return_timing else []
 
@@ -146,7 +146,7 @@ class BaseLoader:
         raise NotImplementedError
 
     def process_images(self):
-        image_dir = PROJECT_ROOT / "Docs_for_DB"
+        image_dir = Path(os.environ.get("VECTORDB_SOURCE_DIR") or PROJECT_ROOT / "Docs_for_DB")
         documents = []
 
         try:

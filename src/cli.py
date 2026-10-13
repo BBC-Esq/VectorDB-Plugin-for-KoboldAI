@@ -398,13 +398,16 @@ def cmd_files(args):
 
 
 def cmd_search(args):
-    from core.databases import list_databases, search_database
+    from core.databases import list_databases, missing_model_problem, search_database
     from core.initialize import prepare
     from core.settings import current_settings
 
+    prepare()
     if args.database not in list_databases():
         return fail(f"There is no database called '{args.database}'.")
-    prepare()
+    problem = missing_model_problem(args.database)
+    if problem:
+        return fail(problem)
     results = search_database(args.database, args.query, contexts=args.contexts, similarity=args.similarity,
                               contains=args.contains or "", document_type=args.type or "")
     if args.json:
@@ -423,6 +426,7 @@ def cmd_search(args):
 
 
 def cmd_delete(args):
+    from core.constants import WIKI_DATABASE
     from core.databases import VECTOR_DB_DIR, delete_database, list_databases
     from core.locks import exclusive
 
@@ -442,6 +446,8 @@ def cmd_delete(args):
         return fail(f"Some files of '{name}' could not be deleted. If KoboldCpp is running with this program's "
                     "MCP server, close KoboldCpp and delete the database again.")
     out(f"Deleted the database '{name}'.")
+    if name == WIKI_DATABASE:
+        out("It came with this program and won't be put back. To get it again, run: python cli.py wiki update")
     return 0
 
 
@@ -732,6 +738,58 @@ def cmd_token(args):
     return 0
 
 
+def cmd_wiki(args):
+    from core.constants import WIKI_DATABASE, WIKI_MODEL, WIKI_ZIP
+    from core.downloads import is_vector_model_downloaded, resolve_vector_model
+    from core.initialize import prepare
+    from core.wiki import (
+        digest, download_wiki, installed_wiki_info, saved_wiki, update_wiki, wiki_changes, wiki_database_exists,
+    )
+
+    prepare()
+    installed = installed_wiki_info()
+    if installed is not None:
+        out(f"'{WIKI_DATABASE}' holds the KoboldCpp wiki as downloaded on {str(installed.get('downloaded'))[:10]}.")
+    out("Downloading the current KoboldCpp wiki...")
+    text = download_wiki()
+    current = installed is not None and installed.get("sha256") == digest(text)
+    if installed is not None and not current:
+        added, removed = wiki_changes(saved_wiki(), text)
+        out(f"The wiki has changed since then: {added} line(s) added and {removed} removed.")
+    if args.action != "update":
+        if current:
+            out(f"'{WIKI_DATABASE}' is up to date.")
+        elif installed is not None:
+            out("Update it with: python cli.py wiki update")
+        elif wiki_database_exists():
+            out(f"'{WIKI_DATABASE}' doesn't record which version of the wiki it holds. "
+                "Rebuild it with: python cli.py wiki update")
+        else:
+            out(f"'{WIKI_DATABASE}' isn't installed. Create it with: python cli.py wiki update")
+        return 0
+    if current and WIKI_ZIP.exists() and not args.force:
+        out(f"'{WIKI_DATABASE}' is already up to date.")
+        return 0
+    model = resolve_vector_model(WIKI_MODEL)
+    if not is_vector_model_downloaded(model):
+        download_model(model)
+    out(f"{'Rebuilding' if wiki_database_exists() else 'Creating'} '{WIKI_DATABASE}' with {model['name']}...")
+    printer = BuildPrinter(args.verbose)
+    started = time.monotonic()
+    try:
+        update_wiki(text, printer)
+    except RuntimeError:
+        if printer.progress.log and not args.verbose:
+            warn("Last lines of the build log:")
+            for line in printer.progress.log[-15:]:
+                warn(f"  {line}")
+        raise
+    chunks = printer.progress.chunks
+    out(f"'{WIKI_DATABASE}' now holds the current KoboldCpp wiki"
+        + (f" ({chunks} chunks)" if chunks is not None else "") + f". Took {format_seconds(time.monotonic() - started)}.")
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="python cli.py",
@@ -841,6 +899,14 @@ def build_parser():
                   "Show whether a Hugging Face access token is set, or set or clear it. 'set' asks for the token "
                   "without showing it, or reads it from standard input.")
     sub.add_argument("action", nargs="?", choices=["set", "clear"], help="omit to show the status")
+
+    sub = command("wiki", cmd_wiki, "Check or update the kobold_wiki database of the KoboldCpp wiki",
+                  "Download the KoboldCpp wiki and say whether the kobold_wiki database still matches it. "
+                  "'update' rebuilds the database when the wiki has changed, along with the copy in the wiki "
+                  "folder that ships with the program.")
+    sub.add_argument("action", nargs="?", choices=["update"], help="omit to only check")
+    sub.add_argument("--force", action="store_true", help="rebuild even if the wiki hasn't changed")
+    sub.add_argument("--verbose", action="store_true", help="show the full build log")
 
     return parser
 

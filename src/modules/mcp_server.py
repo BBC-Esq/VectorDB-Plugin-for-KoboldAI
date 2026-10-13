@@ -229,6 +229,7 @@ def _idle_release_loop():
 
 def tool_list_databases():
     from core.build_jobs import describe_status, running_job
+    from core.constants import WIKI_DATABASE
     from core.databases import database_files, list_databases
     from core.downloads import model_language, vector_model_for_path
 
@@ -241,7 +242,8 @@ def tool_list_databases():
             model_text = Path(info["model"]).name if info.get("model") else "unknown model"
         files = database_files(name)
         count = f"{len({f for f, _ in files})} file(s)" if files is not None else "its files are missing"
-        lines.append(f"- {name}: {model_text}, {count}")
+        about = " (the KoboldCpp wiki, KoboldCpp's own documentation)" if name == WIKI_DATABASE else ""
+        lines.append(f"- {name}{about}: {model_text}, {count}")
     running = running_job()
     text = ("Databases:\n" + "\n".join(lines)) if lines else "There are no vector databases yet."
     if running is not None:
@@ -259,7 +261,7 @@ def tool_search(arguments):
         return _error_result("query is required.")
 
     from core.build_jobs import job_is_running, read_status
-    from core.databases import list_databases
+    from core.databases import list_databases, missing_model_problem
     from core.settings import current_settings
 
     available = sorted(list_databases())
@@ -269,6 +271,9 @@ def tool_search(arguments):
             return _error_result(f"'{database_name}' is still being created. Check vectordb_build_status.")
         listed = ", ".join(available) if available else "none"
         return _error_result(f"No database named '{database_name}'. Available databases: {listed}.")
+    problem = missing_model_problem(database_name)
+    if problem:
+        return _error_result(problem)
 
     settings = current_settings()
     requested = _count(arguments.get("passages"))
@@ -419,6 +424,9 @@ def main():
     from core.environment import prepare_process
 
     prepare_process()
+    from core.wiki import install_wiki
+
+    install_wiki()
     TOOLS = build_tools()
     threading.Thread(target=_idle_release_loop, daemon=True).start()
     stdin = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8", errors="replace")

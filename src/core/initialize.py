@@ -87,6 +87,8 @@ def prepare():
             config_data['Compute_Device']['database_query'] = 'cuda'
         update_config(prefer_gpu)
     check_for_necessary_folders()
+    from core.wiki import install_wiki
+    install_wiki()
 
 def clear_pickle_folder():
     pickle_folder = Path('pickle')
