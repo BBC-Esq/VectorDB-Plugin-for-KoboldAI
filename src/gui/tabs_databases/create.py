@@ -7,12 +7,10 @@ from PySide6.QtWidgets import QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QM
 
 from gui.tabs_databases.choose_documents import choose_documents_directory, SymlinkWorker
 from core.utilities import my_cprint, save_config_atomically
-from core.databases import (
-    check_preconditions_for_db_creation, register_database, remove_partial_database,
-    start_build, terminate_process_tree,
-)
+from core.databases import DatabaseBuild, check_preconditions_for_db_creation
 from core.settings import set_embedding_model
 from core.staging import DOCS_DIR, collect_files, remove_staged_file, staged_files
+from core.downloads import is_vector_model_downloaded, model_directory, model_directory_name, vector_models
 from gui.download_model import model_downloaded_signal
 from gui.helpers import open_file, show_pdfs_need_ocr_dialog
 from core.constants import TOOLTIPS, PROJECT_ROOT
@@ -34,46 +32,28 @@ class VectorDBWorker(QThread):
 
     def __init__(self, database_name, parent=None):
         super().__init__(parent)
-        self.database_name = database_name
-        self._process = None
-        self._cancelled = False
+        self.build = DatabaseBuild(database_name)
+        self.result = None
 
     def run(self):
         try:
             self.progress.emit("Initializing database creation...")
-
-            self._process = start_build(self.database_name)
-
-            for line in self._process.stdout:
-                line = line.rstrip("\n")
-                if line.strip():
-                    print(f"  [DB Creation] {line}", flush=True)
-                    self.progress.emit(line)
-
-            self._process.wait()
-            exit_code = self._process.returncode
-
-            if self._cancelled:
-                self.finished.emit(False, exit_code, "Cancelled by user.")
-            elif exit_code == 0:
-                self.finished.emit(True, exit_code, "Database created successfully!")
-            else:
-                self.finished.emit(
-                    False, exit_code,
-                    f"Database build failed (exit code {exit_code}). "
-                    "Check the log window for details."
-                )
-
+            self.result = self.build.run(self._on_line)
+            self.finished.emit(self.result.success, self.result.exit_code, self.result.message)
         except Exception as e:
             import traceback
             traceback.print_exc()
             self.finished.emit(False, -1, f"Database creation failed: {e}")
 
+    def _on_line(self, line):
+        try:
+            print(f"  [DB Creation] {line}", flush=True)
+        except UnicodeEncodeError:
+            print(f"  [DB Creation] {line}".encode("ascii", "replace").decode("ascii"), flush=True)
+        self.progress.emit(line)
+
     def cancel(self):
-        self._cancelled = True
-        proc = self._process
-        if proc and proc.poll() is None:
-            terminate_process_tree(proc.pid)
+        self.build.cancel()
 
 
 class StagedFilesListView(QListView):
@@ -354,15 +334,9 @@ class DatabasesTab(QWidget):
         try:
             self.model_combobox.clear()
             self.model_combobox.addItem("Select a model", None)
-            script_dir = PROJECT_ROOT
-            vector_dir = script_dir / "Models" / "vector"
-            if not vector_dir.exists():
-                return
-            for folder in vector_dir.iterdir():
-                if folder.is_dir():
-                    display_name = folder.name
-                    full_path = str(folder)
-                    self.model_combobox.addItem(display_name, full_path)
+            for model in vector_models():
+                if is_vector_model_downloaded(model):
+                    self.model_combobox.addItem(model_directory_name(model), str(model_directory(model)))
         finally:
             self.model_combobox.blockSignals(False)
 
@@ -641,20 +615,18 @@ class DatabasesTab(QWidget):
         self.db_worker.cancel()
 
     def on_worker_finished(self, success: bool, exit_code: int, message: str):
-        was_cancelled = (not success) and message == "Cancelled by user."
+        result = self.db_worker.result if self.db_worker is not None else None
         try:
-            if was_cancelled:
-                if self.current_database_name:
-                    remove_partial_database(self.current_database_name)
-                QMessageBox.information(
-                    self,
-                    "Cancelled",
-                    "Database creation was cancelled and any partial files were removed."
-                )
-            elif success:
+            if success:
                 my_cprint(f"{self.current_model_name} removed from memory.", "red")
-                register_database(self.current_database_name)
+                if result is not None and result.not_added:
+                    shown = "\n".join(result.not_added[:20])
+                    more = len(result.not_added) - 20
+                    message += (f"\n\n{len(result.not_added)} file(s) were not fully added:\n{shown}"
+                                + (f"\n...and {more} more" if more > 0 else ""))
                 QMessageBox.information(self, "Success", message)
+            elif result is not None and result.cancelled:
+                QMessageBox.information(self, "Cancelled", message)
             else:
                 QMessageBox.critical(self, "Error", message)
         except Exception as e:
@@ -683,8 +655,6 @@ class DatabasesTab(QWidget):
         if self.db_worker is not None and self.db_worker.isRunning():
             self.db_worker.cancel()
             self.db_worker.wait(5000)
-            if self.current_database_name:
-                remove_partial_database(self.current_database_name)
 
     def toggle_group_box(self, group_box, checked):
         self.groups[group_box] = 1 if checked else 0

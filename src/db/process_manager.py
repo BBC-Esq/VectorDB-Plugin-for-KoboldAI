@@ -7,14 +7,6 @@ logger = logging.getLogger(__name__)
 
 
 class ProcessManager:
-    """Singleton that tracks every multiprocessing.Process spawned by the app
-    and provides a graceful, time-bounded cleanup path on shutdown.
-
-    Cleanup escalates: terminate (with timeout) -> kill (with timeout) -> close.
-    Without this, an unclean GUI exit can leak Python child processes that hold
-    open TileDB arrays, model weights, or CUDA contexts.
-    """
-
     _instance = None
     _lock = threading.Lock()
 
@@ -45,7 +37,10 @@ class ProcessManager:
                 logger.debug(f"Unregistered process {process.pid if process.pid else 'unknown'}")
 
     def cleanup_one(self, process: multiprocessing.Process, timeout: float = 5.0) -> bool:
-        if not process or not process.is_alive():
+        try:
+            if not process or not process.is_alive():
+                return True
+        except ValueError:
             return True
 
         try:
@@ -58,14 +53,14 @@ class ProcessManager:
                 process.kill()
                 process.join(timeout=1.0)
 
+            stopped = not process.is_alive()
+            self.unregister(process)
             if hasattr(process, 'close'):
                 try:
                     process.close()
                 except Exception:
                     pass
-
-            self.unregister(process)
-            return not process.is_alive()
+            return stopped
         except Exception as e:
             logger.error(f"Error cleaning up process: {e}")
             return False

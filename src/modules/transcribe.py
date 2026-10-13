@@ -3,7 +3,9 @@ from pathlib import Path
 import warnings
 import shutil
 import json
+import os
 
+import psutil
 import torch
 import av
 
@@ -56,8 +58,9 @@ class WhisperTranscriber:
             'model_identifier': self.model_identifier,
         }
 
-        if 'large-v3' in self.model_identifier:
-            self.model_kwargs['n_mels'] = 128
+        if not torch.cuda.is_available():
+            self.model_kwargs['device'] = 'cpu'
+            self.model_kwargs['cpu_threads'] = psutil.cpu_count(logical=False) or os.cpu_count() or 4
 
     def start_transcription_process(self, audio_file):
         self.audio_file = audio_file
@@ -164,6 +167,15 @@ class WhisperTranscriber:
         transcription = " ".join([_['text'] for _ in out[0]]).strip()
         return transcription
 
+    @staticmethod
+    def _same_source(json_path, metadata):
+        try:
+            existing = json.loads(json_path.read_text(encoding="utf-8")).get("metadata", {})
+        except (OSError, ValueError, AttributeError):
+            return False
+        return (os.path.normcase(str(existing.get("file_path", "")))
+                == os.path.normcase(str(metadata.get("file_path", ""))))
+
     def create_document_object(self, transcription_text, audio_file_path):
         metadata = extract_typed_metadata(audio_file_path, "audio")
 
@@ -173,6 +185,10 @@ class WhisperTranscriber:
 
         audio_file_name = Path(audio_file_path).stem
         json_file_path = docs_dir / f"{audio_file_name}.json"
+        counter = 2
+        while json_file_path.exists() and not self._same_source(json_file_path, metadata):
+            json_file_path = docs_dir / f"{audio_file_name} ({counter}).json"
+            counter += 1
 
         doc_dict = {
             "page_content": transcription_text,

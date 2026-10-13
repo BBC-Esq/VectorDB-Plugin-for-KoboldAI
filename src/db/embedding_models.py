@@ -1,9 +1,7 @@
-import functools
 import gc
 import logging
 import os
 import pickle
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -14,40 +12,39 @@ from pathlib import Path
 import numpy as np
 import torch
 from sentence_transformers import SentenceTransformer
+from sentence_transformers.base.modules.normalize import Normalize
 from sentence_transformers.util import batch_to_device
 
 from core.config import get_config
 from core.utilities import (
-    supports_flash_attention,
     get_embedding_dtype_and_batch,
     get_model_native_precision,
+    quiet_transformers_loading_bars,
 )
 
 logger = logging.getLogger(__name__)
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-# torch.compile (ModernBERT's reference_compile) needs MSVC's cl.exe on Windows; detect it silently so
-# compilation is only enabled when it will actually build (otherwise it falls back to eager/sdpa).
-_MSVC_AVAILABLE = shutil.which("cl") is not None
+quiet_transformers_loading_bars()
 
 
-@functools.lru_cache(maxsize=None)
-def _model_supports_flash(model_path: str) -> bool:
-    try:
-        import json
-        from transformers.models.auto.configuration_auto import CONFIG_MAPPING
-        from transformers.models.auto.modeling_auto import MODEL_MAPPING
-        model_type = json.loads((Path(model_path) / "config.json").read_text(encoding="utf-8")).get("model_type")
-        if not model_type or model_type not in CONFIG_MAPPING:
-            return False
-        model_cls = MODEL_MAPPING[CONFIG_MAPPING[model_type]]
-        flag = getattr(model_cls, "_supports_flash_attn", None)
-        if flag is None:
-            flag = getattr(model_cls, "_supports_flash_attn_2", False)
-        return bool(flag)
-    except Exception:
-        return False
+def _load_normalize_with_known_keys(cls, model_name_or_path="", subfolder="", token=None, cache_folder=None,
+                                    revision=None, local_files_only=False, **kwargs):
+    if not model_name_or_path:
+        return cls()
+    config = cls.load_config(
+        model_name_or_path=model_name_or_path,
+        subfolder=subfolder,
+        token=token,
+        cache_folder=cache_folder,
+        revision=revision,
+        local_files_only=local_files_only,
+    )
+    return cls(**{key: value for key, value in config.items() if key in cls.config_keys})
+
+
+Normalize.load = classmethod(_load_normalize_with_known_keys)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -72,15 +69,25 @@ def _get_tokenize_parallel_workers():
 
 
 def _get_model_family(model_path: str) -> str:
-    model_path_lower = model_path.lower()
+    model_path_lower = os.path.basename(str(model_path).rstrip("/\\")).lower()
     if "harrier" in model_path_lower:
         return "harrier"
-    if "qwen" in model_path_lower or "qwen3-embedding" in model_path_lower or "octen" in model_path_lower:
+    if "jasper" in model_path_lower:
+        return "jasper"
+    if "f2llm" in model_path_lower:
+        return "f2llm"
+    if "geevec" in model_path_lower:
+        return "geevec"
+    if "qwen" in model_path_lower or "qwen3-embedding" in model_path_lower or "octen" in model_path_lower or "yuan" in model_path_lower:
         return "qwen"
     if "bge" in model_path_lower:
         return "bge"
     if "modernbert" in model_path_lower:
-        return "modernbert"
+        return "modernbert-8192" if "8192" in model_path_lower else "modernbert-512"
+    if "embeddinggemma" in model_path_lower:
+        return "embeddinggemma"
+    if model_path_lower.startswith("e5-") or "-e5-" in model_path_lower or "_e5-" in model_path_lower:
+        return "e5"
     return "generic"
 
 
@@ -89,6 +96,18 @@ def _get_prompt_for_family(family: str, is_query: bool = False) -> str:
         return "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:"
     if family == "bge" and is_query:
         return "Represent this sentence for searching relevant passages: "
+    if family == "jasper" and is_query:
+        return "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: "
+    if family == "f2llm" and is_query:
+        return "Instruct: Given a question, retrieve passages that can help answer the question.\nQuery: "
+    if family == "geevec" and is_query:
+        return "Instruct: Given a question, retrieve passages that answer the question.\nQuery: "
+    if family == "embeddinggemma":
+        return "task: search result | query: " if is_query else "title: none | text: "
+    if family == "e5":
+        return "query: " if is_query else "passage: "
+    if family == "modernbert-512":
+        return "search_query: " if is_query else "search_document: "
     return ""
 
 
@@ -115,8 +134,14 @@ def _normalize_text(text: str) -> str:
 
 
 ENCODE_BATCH_SIZE_BY_MODEL = {
-    "harrier-oss-v1-270m": 50,
+    "harrier-oss-v1-270m": 32,
+    "embeddinggemma-300m": 32,
     "harrier-oss-v1-0.6b": 14,
+    "Jasper-Token-Compression-600M": 14,
+    "Yuan-embedding-2.0-en": 14,
+    "F2LLM-v2-1.7B": 14,
+    "F2LLM-v2-4B": 6,
+    "geevec-embeddings-1.0-lite": 14,
     "bge-small-en-v1.5": 100,
     "bge-base-en-v1.5": 80,
     "bge-large-en-v1.5": 50,
@@ -340,7 +365,7 @@ class DirectEmbeddingModel:
         self._initialize_model()
 
     def _resolve_padding_side(self, family):
-        if family == "qwen":
+        if family in ("qwen", "jasper", "f2llm", "geevec"):
             return "left"
         return None
 
@@ -351,26 +376,20 @@ class DirectEmbeddingModel:
         family = _get_model_family(self.model_path)
 
         model_kwargs = {
-            "torch_dtype": self.dtype if self.dtype else torch.float32,
+            "dtype": self.dtype if self.dtype else torch.float32,
+            "attn_implementation": "sdpa",
         }
 
-        is_cuda = self.device.lower().startswith("cuda")
-        is_half = self.dtype in (torch.float16, torch.bfloat16)
-        config_kwargs = {}
-
-        if is_cuda and is_half and supports_flash_attention() and _model_supports_flash(self.model_path):
-            model_kwargs["attn_implementation"] = "flash_attention_2"
-        else:
-            model_kwargs["attn_implementation"] = "sdpa"
-
-        # Force sdpa for now. flash-attn was NOT the cause of the earlier large-build crashes (that was numpy 2.4.6, now pinned to 2.3.4); this is kept only out of caution. To re-enable adaptive flash-attention-2 selection, delete this line.
-        model_kwargs["attn_implementation"] = "sdpa"
-
-        if family == "modernbert":
-            config_kwargs["reference_compile"] = _MSVC_AVAILABLE
+        # TEMPORARY WORKAROUND - remove once geevec-embeddings-1.0-lite's custom code supports transformers 5.
+        # Its modeling_qwen3_pseudo_moe.py declares `_tied_weights_keys = []` (the transformers 4 list format) while
+        # its config.json sets tie_word_embeddings=True, so transformers 5 crashes in post_init() expecting a dict.
+        # The model has no output head to tie, so disabling tying loads every weight and leaves the vectors unchanged.
+        if family == "geevec":
+            model_kwargs["tie_word_embeddings"] = False
 
         tokenizer_kwargs = {
             "model_max_length": self.max_seq_length,
+            "split_special_tokens": True,
         }
 
         padding_side = self._resolve_padding_side(family)
@@ -384,11 +403,14 @@ class DirectEmbeddingModel:
             device=self.device,
             trust_remote_code=True,
             model_kwargs=model_kwargs,
-            tokenizer_kwargs=tokenizer_kwargs,
-            config_kwargs=config_kwargs,
+            processor_kwargs=tokenizer_kwargs,
         )
 
         self.model.max_seq_length = self.max_seq_length
+
+        auto_model = getattr(self.model[0], "auto_model", None)
+        if getattr(getattr(auto_model, "config", None), "use_cache", False):
+            auto_model.config.use_cache = False
 
         if hasattr(self.model, "tokenizer") and self.model.tokenizer is not None:
             self.tokenizer = self.model.tokenizer
@@ -422,6 +444,9 @@ class DirectEmbeddingModel:
 
         total = len(texts)
         logger.info(f"Embedding {total} texts via subprocess tokenization pipeline")
+
+        if self.prompt:
+            texts = [self.prompt + text for text in texts]
 
         encode_batch_size = _get_encode_batch_size(self.device, self.model_path)
 
@@ -527,13 +552,10 @@ class DirectEmbeddingModel:
                 pass
 
     def embed_query(self, text: str) -> list:
-        if self.prompt:
-            text = self.prompt + text
-
         if not isinstance(text, str):
             text = str(text)
 
-        text = _normalize_text(text)
+        text = self.prompt + _normalize_text(text)
 
         embeddings = self._safe_encode([text])
         return embeddings[0].tolist() if len(embeddings) else []
@@ -603,10 +625,12 @@ def create_embedding_model(
             is_query=is_query,
         )
 
-    if family == "qwen":
+    if family in ("qwen", "jasper", "f2llm", "geevec"):
         max_seq_length = 8192
-    elif family == "modernbert":
-        max_seq_length = 8192 if "8192" in model_name else 512
+    elif family == "modernbert-8192":
+        max_seq_length = 8192
+    elif family == "embeddinggemma":
+        max_seq_length = 2048
     else:
         max_seq_length = 512
 

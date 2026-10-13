@@ -4,7 +4,6 @@ from modules.ocr import process_documents
 
 OCR_ENGINES = {
     "RapidOCR": "rapidocr",
-    "Tesseract": "tesseract"
 }
 
 

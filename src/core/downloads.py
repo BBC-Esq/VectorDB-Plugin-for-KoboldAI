@@ -1,17 +1,16 @@
 import atexit
 import fnmatch
 import shutil
+from pathlib import Path
 
 import humanfriendly
 import yaml
-from huggingface_hub import HfApi, snapshot_download
-from huggingface_hub.hf_api import RepoFile
-from huggingface_hub.utils import GatedRepoError, RepositoryNotFoundError, disable_progress_bars
 
 from core.constants import PROJECT_ROOT, VECTOR_MODELS
 
 MODELS_DIR = PROJECT_ROOT / "Models"
 CONFIG_PATH = PROJECT_ROOT / "config.yaml"
+INCOMPLETE_MARKER = ".download_incomplete"
 
 MODEL_DIRECTORIES = {
     "vector": "vector",
@@ -20,6 +19,11 @@ MODEL_DIRECTORIES = {
 
 class DownloadError(Exception):
     pass
+
+
+def is_complete_download(folder):
+    folder = Path(folder)
+    return folder.is_dir() and not (folder / INCOMPLETE_MARKER).exists()
 
 
 def get_hf_token():
@@ -60,7 +64,7 @@ def downloaded_vector_model_names():
     vector_dir = MODELS_DIR / "vector"
     if not vector_dir.exists():
         return set()
-    return {d.name for d in vector_dir.iterdir() if d.is_dir()}
+    return {d.name for d in vector_dir.iterdir() if is_complete_download(d)}
 
 
 def is_vector_model_downloaded(model_info):
@@ -77,6 +81,9 @@ def find_vector_model(name):
 
 class ModelDownloader:
     def __init__(self, model_info, model_type="vector"):
+        from huggingface_hub import HfApi
+        from huggingface_hub.utils import disable_progress_bars
+
         self.model_info = model_info
         self.model_type = model_type
         self.hf_token = get_hf_token()
@@ -87,9 +94,20 @@ class ModelDownloader:
 
     def cleanup_incomplete_download(self):
         try:
-            if self.local_dir and self.local_dir.exists():
-                if not any(self.local_dir.iterdir()):
-                    shutil.rmtree(self.local_dir)
+            local_dir = getattr(self, "local_dir", None)
+            if not local_dir or not local_dir.exists() or getattr(self, "_had_existing_download", False):
+                return
+            if not (local_dir / INCOMPLETE_MARKER).exists():
+                return
+            for child in local_dir.iterdir():
+                if child.name == INCOMPLETE_MARKER:
+                    continue
+                if child.is_dir():
+                    shutil.rmtree(child, ignore_errors=True)
+                else:
+                    child.unlink(missing_ok=True)
+            if not any(child.name != INCOMPLETE_MARKER for child in local_dir.iterdir()):
+                shutil.rmtree(local_dir, ignore_errors=True)
         except Exception:
             pass
 
@@ -103,6 +121,9 @@ class ModelDownloader:
         return model_repo_id(self.model_info)
 
     def check_repo_type(self, repo_id):
+        from huggingface_hub import HfApi
+        from huggingface_hub.utils import GatedRepoError, RepositoryNotFoundError
+
         try:
             repo_info = self.api.repo_info(repo_id, timeout=60, token=False)
             if getattr(repo_info, "private", False):
@@ -128,10 +149,14 @@ class ModelDownloader:
             return "error"
 
     def _list_repo_files(self, repo_id, use_token):
+        from huggingface_hub import HfApi
+
         api = self.api if not use_token else HfApi(token=self.hf_token)
         return list(api.list_repo_tree(repo_id, recursive=True))
 
     def _select_patterns(self, repo_files, allow_patterns, ignore_patterns):
+        from huggingface_hub.hf_api import RepoFile
+
         final_ignore = [
             "*.ckpt",
             "*.onnx",
@@ -167,9 +192,13 @@ class ModelDownloader:
             final_ignore.append("*consolidated*")
         if allow_patterns is None:
             allow_patterns = ["*.json", "*.safetensors", "*.bin", "*.model", "tokenizer*", "vocab*", "merges.txt", "config.yaml", "modules.json", "1_Pooling/*", "sentencepiece.*", "spiece.*"]
+            if isinstance(self.model_info, dict) and self.model_info.get("custom_code"):
+                allow_patterns.append("*.py")
         return allow_patterns, final_ignore
 
     def _filter_and_size(self, repo_files, allow_patterns, ignore_patterns):
+        from huggingface_hub.hf_api import RepoFile
+
         included_files = []
         ignored_files = []
         total_size = 0
@@ -196,6 +225,8 @@ class ModelDownloader:
         raise DownloadError(msg)
 
     def download(self, allow_patterns=None, ignore_patterns=None):
+        from huggingface_hub import snapshot_download
+
         repo_id = self.get_model_url()
         repo_type = self.check_repo_type(repo_id)
         if repo_type not in ["public", "gated"]:
@@ -214,8 +245,11 @@ class ModelDownloader:
                 f"Hugging Face token via the File menu."
             )
         local_dir = self.get_model_directory()
-        had_existing_download = local_dir.exists() and any(local_dir.iterdir())
+        marker = local_dir / INCOMPLETE_MARKER
+        had_existing_download = local_dir.exists() and any(local_dir.iterdir()) and not marker.exists()
+        self._had_existing_download = had_existing_download
         local_dir.mkdir(parents=True, exist_ok=True)
+        marker.touch()
         atexit.register(self.cleanup_incomplete_download)
         try:
             repo_files = self._list_repo_files(repo_id, use_token=(repo_type == "gated"))
@@ -231,7 +265,6 @@ class ModelDownloader:
                 "repo_id": repo_id,
                 "local_dir": str(local_dir),
                 "max_workers": 8,
-                "local_dir_use_symlinks": False,
                 "ignore_patterns": final_ignore_patterns,
                 "allow_patterns": allow_patterns,
                 "etag_timeout": 60
@@ -241,6 +274,7 @@ class ModelDownloader:
             else:
                 download_kwargs["token"] = False
             snapshot_download(**download_kwargs)
+            marker.unlink(missing_ok=True)
             print("\033[92mModel downloaded and ready to use.\033[0m")
             atexit.unregister(self.cleanup_incomplete_download)
             return self.get_model_directory_name()

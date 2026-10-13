@@ -42,7 +42,7 @@ class OCRToolSettingsTab(QWidget):
         engine_selection_hbox.addWidget(engine_label)
 
         self.engine_combo = QComboBox()
-        self.engine_combo.addItems(["RapidOCR", "Tesseract"])
+        self.engine_combo.addItems(list(OCR_ENGINES))
         self.engine_combo.setCurrentText("RapidOCR")
         engine_selection_hbox.addWidget(self.engine_combo)
 

@@ -1,5 +1,8 @@
 import os
+import io
+import re
 import csv
+import codecs
 import logging
 import warnings
 import datetime
@@ -7,11 +10,13 @@ import hashlib
 from pathlib import Path
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 
 import fitz
 from bs4 import BeautifulSoup
 
 from core.text_utils import normalize_text
+from core.pdf_ocr_gate import text_is_garbled, corrupt_fraction, control_fraction
 from core.constants import SUPPORTED_EXTENSIONS, PIPELINE_PRESETS
 from db.text_splitter import Document, FixedSizeTextSplitter, add_pymupdf_page_metadata
 
@@ -64,60 +69,152 @@ def extract_document_metadata(file_path, content_hash=None):
     }
 
 
+def _ocr_text_for_garbled_page(page) -> Optional[str]:
+    visible, hidden = [], []
+    for block in page.get_text("dict")["blocks"]:
+        for line in block.get("lines", []):
+            spans = line["spans"]
+            visible.append("".join(span["text"] for span in spans if span.get("alpha") != 0))
+            hidden.append("".join(span["text"] for span in spans if span.get("alpha") == 0))
+    hidden_text = "\n".join(t for t in hidden if t.strip())
+    if hidden_text and text_is_garbled("\n".join(t for t in visible if t.strip())):
+        return hidden_text
+    return None
+
+
 def _load_pdf(file_path: Path) -> Optional[str]:
     full_content = []
     with fitz.open(str(file_path)) as doc:
         for page in doc:
             text = page.get_text()
+            if corrupt_fraction(text) or control_fraction(text):
+                text = _ocr_text_for_garbled_page(page) or text
             if text.strip():
                 full_content.append(f"[[page{page.number + 1}]]{text}")
     return "".join(full_content) if full_content else None
 
 
 def _load_docx(file_path: Path) -> Optional[str]:
+    import zipfile
     import docx2txt
+    from docx2txt.docx2txt import xml2text
     text = docx2txt.process(str(file_path))
+    notes = []
+    with zipfile.ZipFile(str(file_path)) as zf:
+        names = set(zf.namelist())
+        for part, label in (("word/footnotes.xml", "Footnotes"), ("word/endnotes.xml", "Endnotes")):
+            if part in names:
+                note_text = xml2text(zf.read(part)).strip()
+                if note_text:
+                    notes.append(f"{label}:\n{note_text}")
+    if notes:
+        text = "\n\n".join(([text] if text else []) + notes)
     return text if text and text.strip() else None
 
 
+_BOMS = (
+    (codecs.BOM_UTF32_LE, "utf-32-le"),
+    (codecs.BOM_UTF32_BE, "utf-32-be"),
+    (codecs.BOM_UTF8, "utf-8"),
+    (codecs.BOM_UTF16_LE, "utf-16-le"),
+    (codecs.BOM_UTF16_BE, "utf-16-be"),
+)
+
+
+def _decode_text(data: bytes, declared: Optional[str] = None, translate_newlines: bool = True) -> str:
+    text = None
+    for bom, enc in _BOMS:
+        if data.startswith(bom):
+            text = data[len(bom):].decode(enc, errors="replace")
+            break
+    if text is None and b"\x00" in data[:4096]:
+        sample = data[:4096]
+        even, odd = sample[0::2], sample[1::2]
+        if odd and odd.count(0) > 0.3 * len(odd) and even.count(0) < 0.05 * len(even):
+            text = data.decode("utf-16-le", errors="replace")
+        elif even and even.count(0) > 0.3 * len(even) and odd.count(0) < 0.05 * len(odd):
+            text = data.decode("utf-16-be", errors="replace")
+    if text is None:
+        candidates = ["utf-8"]
+        if declared:
+            try:
+                name = codecs.lookup(declared).name
+            except LookupError:
+                name = None
+            if name and name not in ("iso8859-1", "ascii"):
+                candidates.append(name)
+        candidates.append("cp1252")
+        for enc in candidates:
+            try:
+                text = data.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            text = data.decode("latin-1")
+    if translate_newlines:
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return text
+
+
 def _load_txt(file_path: Path) -> Optional[str]:
-    encodings = ["utf-8", "utf-8-sig", "cp1252", "latin-1"]
-    for enc in encodings:
-        try:
-            with open(file_path, "r", encoding=enc) as f:
-                text = f.read()
-            return text if text and text.strip() else None
-        except UnicodeDecodeError:
-            continue
-    return None
+    text = _decode_text(Path(file_path).read_bytes())
+    return text if text and text.strip() else None
 
 
 def _load_csv(file_path: Path) -> Optional[str]:
-    encodings = ["utf-8", "utf-8-sig", "cp1252", "latin-1"]
-    for enc in encodings:
-        rows = []
-        try:
-            with open(file_path, "r", encoding=enc, newline="") as f:
-                reader = csv.reader(f)
-                for row in reader:
-                    rows.append(" ".join(row))
-            return "\n".join(rows) if rows else None
-        except UnicodeDecodeError:
-            continue
-    return None
+    text = _decode_text(Path(file_path).read_bytes(), translate_newlines=False)
+    rows = [" ".join(row) for row in csv.reader(io.StringIO(text, newline=""))]
+    return "\n".join(rows) if rows else None
 
 
 def _load_html(file_path: Path) -> Optional[str]:
-    encodings = ["utf-8", "utf-8-sig", "cp1252", "latin-1"]
-    for enc in encodings:
+    from bs4.dammit import EncodingDetector
+    data = Path(file_path).read_bytes()
+    markup = _decode_text(data, EncodingDetector.find_declared_encoding(data, is_html=True))
+    text = BeautifulSoup(markup, "lxml").get_text(separator=" ")
+    return text if text and text.strip() else None
+
+
+def _eml_part_text(part) -> str:
+    try:
+        content = part.get_content()
+        if isinstance(content, str):
+            return content
+    except Exception:
+        pass
+    data = part.get_payload(decode=True) or b""
+    for enc in filter(None, (part.get_content_charset(), "utf-8", "cp1252")):
         try:
-            with open(file_path, "r", encoding=enc) as f:
-                soup = BeautifulSoup(f, "lxml")
-            text = soup.get_text(separator=" ")
-            return text if text and text.strip() else None
-        except UnicodeDecodeError:
+            return data.decode(enc)
+        except (LookupError, UnicodeDecodeError):
             continue
-    return None
+    return data.decode("latin-1", errors="replace")
+
+
+def _collect_eml_text(part, parts):
+    if part.get_content_maintype() == "message":
+        payload = part.get_payload()
+        for inner in payload if isinstance(payload, list) else []:
+            _collect_eml_text(inner, parts)
+        return
+    if part.is_multipart():
+        if part.get_content_subtype() == "alternative":
+            body = part.get_body(preferencelist=("plain", "html"))
+            if body is not None and body is not part:
+                _collect_eml_text(body, parts)
+            return
+        for child in part.iter_parts():
+            _collect_eml_text(child, parts)
+        return
+    content_type = part.get_content_type()
+    if content_type not in ("text/plain", "text/html"):
+        return
+    text = _eml_part_text(part)
+    if content_type == "text/html":
+        text = BeautifulSoup(text, "lxml").get_text(separator=" ")
+    if text.strip():
+        parts.append(text)
 
 
 def _load_eml(file_path: Path) -> Optional[str]:
@@ -132,24 +229,7 @@ def _load_eml(file_path: Path) -> Optional[str]:
     if subject:
         parts.append(f"Subject: {subject}")
 
-    if msg.is_multipart():
-        for part in msg.walk():
-            content_type = part.get_content_type()
-            if content_type == "text/plain":
-                payload = part.get_content()
-                if isinstance(payload, str) and payload.strip():
-                    parts.append(payload)
-            elif content_type == "text/html":
-                payload = part.get_content()
-                if isinstance(payload, str):
-                    soup = BeautifulSoup(payload, "lxml")
-                    text = soup.get_text(separator=" ")
-                    if text.strip():
-                        parts.append(text)
-    else:
-        payload = msg.get_content()
-        if isinstance(payload, str) and payload.strip():
-            parts.append(payload)
+    _collect_eml_text(msg, parts)
 
     return "\n".join(parts) if parts else None
 
@@ -202,6 +282,31 @@ def _load_xlsx(file_path: Path) -> Optional[str]:
     return "\n".join(parts) if parts else None
 
 
+def _split_rtf_footnotes(rtf: str):
+    body, notes, pos = [], [], 0
+    for match in re.finditer(r"\{\\footnote(?![a-zA-Z])", rtf):
+        if match.start() < pos:
+            continue
+        depth, end = 0, match.start()
+        while end < len(rtf):
+            ch = rtf[end]
+            if ch == "\\":
+                end += 2
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            end += 1
+        body.append(rtf[pos:match.start()])
+        notes.append("{" + rtf[match.end():end + 1])
+        pos = end + 1
+    body.append(rtf[pos:])
+    return "".join(body), notes
+
+
 def _load_rtf(file_path: Path) -> Optional[str]:
     from striprtf.striprtf import rtf_to_text
 
@@ -210,7 +315,12 @@ def _load_rtf(file_path: Path) -> Optional[str]:
         try:
             with open(file_path, "r", encoding=enc) as f:
                 rtf_content = f.read()
-            text = rtf_to_text(rtf_content)
+            body, notes = _split_rtf_footnotes(rtf_content)
+            text = rtf_to_text(body)
+            note_texts = [t.strip() for t in (rtf_to_text("{\\rtf1 " + n + "}") for n in notes) if t.strip()]
+            if note_texts:
+                text = text.rstrip() + "\n\nFootnotes:\n" + "\n".join(note_texts)
+            text = text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
             return text if text and text.strip() else None
         except UnicodeDecodeError:
             continue
@@ -218,15 +328,8 @@ def _load_rtf(file_path: Path) -> Optional[str]:
 
 
 def _load_md(file_path: Path) -> Optional[str]:
-    encodings = ["utf-8", "utf-8-sig", "cp1252", "latin-1"]
-    for enc in encodings:
-        try:
-            with open(file_path, "r", encoding=enc) as f:
-                text = f.read()
-            return text if text and text.strip() else None
-        except UnicodeDecodeError:
-            continue
-    return None
+    text = _decode_text(Path(file_path).read_bytes())
+    return text if text and text.strip() else None
 
 
 LOADER_MAP = {
@@ -354,6 +457,8 @@ def load_documents(source_dir: Path) -> list:
                         batch_results = future.result()
                         for content, metadata in batch_results:
                             docs.append(Document(page_content=content, metadata=metadata))
+                    except BrokenProcessPool:
+                        raise
                     except Exception as e:
                         logger.error(f"Error in extraction worker: {e}")
         except Exception as e:

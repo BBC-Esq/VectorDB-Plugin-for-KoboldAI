@@ -3,7 +3,7 @@ faulthandler.enable()
 
 # Module-level TileDB DLL preload. Mirrors the approach in VectorDB-Light's
 # vector_db_query.py (lines 1-31). Critical for subprocesses spawned via
-# multiprocessing.Process (e.g. the chunks-only query path): when the
+# multiprocessing.Process: when the
 # fresh interpreter imports this module, the DLLs load immediately —
 # before any other code can accidentally trigger a tiledb.vector_search
 # import without DLL registration, which on Windows causes the
@@ -47,9 +47,6 @@ try:
             except Exception:
                 pass
 except ImportError:
-    # tiledb not installed — will fail later at actual use. Don't block
-    # the import itself in case this module is loaded for non-TileDB work
-    # (e.g. tests that only exercise pure helpers).
     pass
 
 import gc
@@ -94,10 +91,22 @@ from db.embedding_models import load_embedding_model
 from db.sqlite_operations import create_metadata_db
 from db.cuda_manager import get_cuda_manager
 from core.config import get_config, reload_config
-from core.constants import PROJECT_ROOT, PIPELINE_PRESETS
+from core.constants import PROJECT_ROOT, PIPELINE_PRESETS, NOT_ADDED_MARKER, DB_FOLDER_CREATED_MARKER, BUILD_COMPLETE_MARKER
 from core.utilities import my_cprint, set_cuda_paths, configure_logging
 
 logger = logging.getLogger(__name__)
+
+IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tif', '.tiff')
+
+
+def _print_safe(message, color=None):
+    try:
+        if color:
+            my_cprint(message, color)
+        else:
+            print(message, flush=True)
+    except UnicodeEncodeError:
+        _print_safe(message.encode("ascii", "replace").decode("ascii"), color)
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("RUST_BACKTRACE", "1")
@@ -283,6 +292,7 @@ def create_vector_db_in_process(database_name):
     try:
         create_vector_db = CreateVectorDB(database_name=database_name)
         create_vector_db.run()
+        print(BUILD_COMPLETE_MARKER, flush=True)
     except Exception:
         traceback.print_exc()
         raise
@@ -530,7 +540,6 @@ class CreateVectorDB:
         created_persist_dir = False
 
         try:
-            # Stage 1: Extract documents via subprocess
             my_cprint("Extracting documents (subprocess)...", "yellow")
             extract_t0 = time.time()
             _run_extract_with_retry(self.SOURCE_DIRECTORY, extracted_pkl)
@@ -539,6 +548,13 @@ class CreateVectorDB:
             with open(extracted_pkl, "rb") as f:
                 doc_data = pickle.load(f)
             logger.info(f"Extracted {len(doc_data)} documents")
+
+            not_added = []
+            try:
+                with open(extracted_pkl.with_name(extracted_pkl.stem + "_not_extracted.json"), "r", encoding="utf-8") as f:
+                    not_added.extend(f"{name} (no text could be extracted)" for name in json.load(f))
+            except (OSError, ValueError):
+                pass
 
             json_docs_to_save = []
             for content, metadata in doc_data:
@@ -552,6 +568,12 @@ class CreateVectorDB:
                     json_docs_to_save.append(doc)
 
             print("Processing any images...")
+            staged_images = {}
+            for entry in self.SOURCE_DIRECTORY.iterdir():
+                if entry.suffix.lower() in IMAGE_EXTENSIONS:
+                    real_path = os.path.realpath(entry)
+                    staged_images[os.path.normcase(real_path)] = os.path.basename(real_path)
+            processed_images = set()
             try:
                 from modules.process_images import choose_image_loader
                 image_documents = choose_image_loader()
@@ -561,21 +583,22 @@ class CreateVectorDB:
                         metadata = doc.metadata if hasattr(doc, 'metadata') else {}
                         doc_data.append((content, metadata))
                         json_docs_to_save.append(Document(page_content=content, metadata=metadata))
+                        processed_images.add(os.path.normcase(str(metadata.get('file_path', ''))))
             except Exception as e:
                 logger.warning(f"Image processing skipped: {e}")
+            not_added.extend(f"{name} (image could not be processed)"
+                             for key, name in staged_images.items() if key not in processed_images)
 
             if not doc_data:
                 my_cprint("No documents, audio transcripts, or images found to process.", "red")
                 raise RuntimeError("No content found to ingest into the database.")
 
-            # Re-write extracted.pkl with audio+image docs included
             with open(extracted_pkl, "wb") as f:
                 pickle.dump(doc_data, f, protocol=pickle.HIGHEST_PROTOCOL)
 
             del doc_data
             gc.collect()
 
-            # Stage 2: Split documents via subprocess
             my_cprint("Splitting documents into chunks (subprocess)...", "yellow")
             split_t0 = time.time()
             _run_split_with_retry(extracted_pkl, chunks_pkl, chunk_size, chunk_overlap, checkpoint_dir)
@@ -592,6 +615,8 @@ class CreateVectorDB:
             if isinstance(split_output, dict):
                 chunk_texts = split_output["texts"]
                 chunks_with_meta = split_output.get("chunks", [])
+                not_added.extend(f"{name} (could not be split into chunks)"
+                                 for name in split_output.get("failed_files", []))
                 del split_output
             else:
                 chunk_texts = split_output
@@ -605,7 +630,6 @@ class CreateVectorDB:
                 my_cprint("No chunks produced after splitting.", "red")
                 raise RuntimeError("No chunks were produced after splitting; nothing to ingest.")
 
-            # Extract metadata dicts from chunks_with_meta, then free it
             all_metadatas = []
             for idx in range(len(chunk_texts)):
                 if idx < len(chunks_with_meta):
@@ -617,7 +641,6 @@ class CreateVectorDB:
             del chunks_with_meta
             gc.collect()
 
-            # Stage 3+4: Tokenize + Embed via subprocess pipeline
             with cuda_mgr.cuda_operation():
                 embeddings = self.initialize_vector_model(EMBEDDING_MODEL_NAME, config_data)
 
@@ -627,6 +650,7 @@ class CreateVectorDB:
             try:
                 self.PERSIST_DIRECTORY.mkdir(parents=True, exist_ok=False)
                 created_persist_dir = True
+                print(DB_FOLDER_CREATED_MARKER, flush=True)
                 my_cprint(f"Created directory: {self.PERSIST_DIRECTORY}", "green")
             except FileExistsError:
                 raise FileExistsError(
@@ -640,8 +664,29 @@ class CreateVectorDB:
             if len(surviving_indices) != len(chunk_texts):
                 dropped = len(chunk_texts) - len(surviving_indices)
                 my_cprint(f"Warning: {dropped} chunk(s) failed tokenization and were skipped.", "red")
+                surviving_set = {int(i) for i in surviving_indices}
+                kept_files = set()
+                dropped_files = set()
+                for i, meta in enumerate(all_metadatas):
+                    (kept_files if i in surviving_set else dropped_files).add(meta.get('file_name', 'unknown'))
+                for name in sorted(dropped_files):
+                    reason = "some text could not be embedded" if name in kept_files else "text could not be embedded"
+                    not_added.append(f"{name} ({reason})")
                 chunk_texts = [chunk_texts[i] for i in surviving_indices]
                 all_metadatas = [all_metadatas[i] for i in surviving_indices]
+
+            embedded_hashes = {meta.get('hash') for meta in all_metadatas}
+            reported = {entry.rsplit(" (", 1)[0] for entry in not_added}
+            kept_docs = []
+            for doc in json_docs_to_save:
+                if doc.metadata.get('hash') in embedded_hashes:
+                    kept_docs.append(doc)
+                else:
+                    name = doc.metadata.get('file_name', 'unknown')
+                    if name not in reported:
+                        not_added.append(f"{name} (no searchable text)")
+                        reported.add(name)
+            json_docs_to_save = kept_docs
 
             embed_elapsed = time.time() - embed_t0
             my_cprint(f"Embedding computation completed in {embed_elapsed:.2f} seconds.", "cyan")
@@ -654,7 +699,6 @@ class CreateVectorDB:
             del vectors
             gc.collect()
 
-            # Stage 5: Write TileDB array + FLAT index in an isolated subprocess
             num_vectors = vectors_array.shape[0]
             embedding_dim = vectors_array.shape[1]
             num_write_batches = (num_vectors + TILEDB_WRITE_BATCH_SIZE - 1) // TILEDB_WRITE_BATCH_SIZE
@@ -700,7 +744,6 @@ class CreateVectorDB:
             pipeline_elapsed = time.time() - pipeline_t0
             my_cprint(f"Database created. Total time: {pipeline_elapsed:.2f} seconds.", "green")
 
-            # Stage 6: Write SQLite metadata DB
             gc.collect()
 
             try:
@@ -716,6 +759,12 @@ class CreateVectorDB:
                 raise
             del json_docs_to_save, hash_id_mappings
             gc.collect()
+
+            if not_added:
+                _print_safe(f"Warning: {len(not_added)} file(s) were not fully added to the database:", "red")
+                for entry in not_added:
+                    _print_safe(f"  - {entry}", "red")
+                print(NOT_ADDED_MARKER + json.dumps(not_added), flush=True)
 
             self.clear_docs_for_db_folder()
 
@@ -735,11 +784,6 @@ _thread_local = threading.local()
 
 
 def get_query_db(database_name: str) -> "QueryVectorDB":
-    """Return a thread-local QueryVectorDB instance, creating it if needed.
-
-    Each thread gets its own cache of database name → QueryVectorDB, so
-    concurrent queries against different databases don't thrash singleton state.
-    """
     if not hasattr(_thread_local, "query_db_cache"):
         _thread_local.query_db_cache = {}
 
@@ -752,7 +796,6 @@ def get_query_db(database_name: str) -> "QueryVectorDB":
 
 
 def clear_query_cache(database_name: Optional[str] = None) -> None:
-    """Clear the thread-local QueryVectorDB cache for the current thread."""
     if not hasattr(_thread_local, "query_db_cache"):
         return
 
@@ -851,18 +894,46 @@ class QueryVectorDB:
 
         logger.info(f"Querying TileDB index: {self.index_uri}")
 
+        results, exhausted = self._retrieve(query_vector_np, k, score_threshold, tiledb)
+
+        if document_types:
+            total = int(getattr(self.index, "size", 0) or 0)
+            fetch_k = k
+            typed = [r for r in results if r[1].get('document_type') == document_types]
+            while len(typed) < k and not exhausted and fetch_k < total:
+                fetch_k = min(max(fetch_k * 4, 100), total)
+                results, exhausted = self._retrieve(query_vector_np, fetch_k, score_threshold, tiledb)
+                typed = [r for r in results if r[1].get('document_type') == document_types]
+            results = typed[:k]
+
+        search_term = (search_term or "").lower()
+        if search_term:
+            filtered_results = [
+                (text, metadata) for text, metadata in results
+                if search_term in text.lower()
+            ]
+        else:
+            filtered_results = results
+
+        contexts = [text for text, _ in filtered_results]
+        metadata_list = [metadata for _, metadata in filtered_results]
+
+        logger.info(f"Final results returned: {len(contexts)}")
+        return contexts, metadata_list
+
+    def _retrieve(self, query_vector_np, k, score_threshold, tiledb):
         result_distances, result_ids = self.index.query(query_vector_np, k=k)
 
         if len(result_distances) == 0 or len(result_distances[0]) == 0:
             logger.warning("No results returned from vector search")
-            return [], []
+            return [], True
 
         distances = result_distances[0]
         ids = result_ids[0]
 
         if len(ids) > 0 and ids[0] == MAX_UINT64_SENTINEL:
             logger.warning("TileDB returned sentinel value - no matches found in index")
-            return [], []
+            return [], True
 
         valid_mask = ids != MAX_UINT64_SENTINEL
         distances = distances[valid_mask]
@@ -870,7 +941,7 @@ class QueryVectorDB:
 
         if len(ids) == 0:
             logger.warning("All results were sentinel values - no valid matches")
-            return [], []
+            return [], True
 
         logger.info(f"Raw distances - min: {distances.min():.4f}, max: {distances.max():.4f}, mean: {distances.mean():.4f}")
 
@@ -888,10 +959,11 @@ class QueryVectorDB:
         valid_indices = similarities >= score_threshold
         num_passing = np.sum(valid_indices)
         logger.info(f"Results passing threshold: {num_passing}")
+        exhausted = bool(num_passing < len(ids) or len(ids) < k)
 
         if not np.any(valid_indices):
             logger.warning(f"No results passed the similarity threshold of {score_threshold}")
-            return [], []
+            return [], True
 
         filtered_distances = distances[valid_indices]
         filtered_ids = ids[valid_indices]
@@ -937,26 +1009,7 @@ class QueryVectorDB:
                     logger.warning(f"Failed to retrieve data for vector ID {vec_id}: {e}")
                     continue
 
-        search_term = (search_term or "").lower()
-        if search_term:
-            filtered_results = [
-                (text, metadata) for text, metadata in results
-                if search_term in text.lower()
-            ]
-        else:
-            filtered_results = results
-
-        if document_types:
-            filtered_results = [
-                (text, metadata) for text, metadata in filtered_results
-                if metadata.get('document_type') == document_types
-            ]
-
-        contexts = [text for text, _ in filtered_results]
-        metadata_list = [metadata for _, metadata in filtered_results]
-
-        logger.info(f"Final results returned: {len(contexts)}")
-        return contexts, metadata_list
+        return results, exhausted
 
     def cleanup(self):
         if self.embeddings:

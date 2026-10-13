@@ -7,9 +7,11 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class DatabaseConfig(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
+class _SubConfig(BaseModel):
+    model_config = ConfigDict(extra="allow", validate_assignment=True)
 
+
+class DatabaseConfig(_SubConfig):
     chunk_size: int = Field(default=700, gt=0, le=100000)
     chunk_overlap: int = Field(default=250, ge=0, le=100000)
     contexts: int = Field(default=5, gt=0, le=1000)
@@ -43,9 +45,7 @@ class DatabaseConfig(BaseModel):
         return v
 
 
-class ComputeDeviceConfig(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
-
+class ComputeDeviceConfig(_SubConfig):
     available: List[str] = Field(default_factory=lambda: ["cpu"])
     database_creation: str = "cpu"
     database_query: str = "cpu"
@@ -59,24 +59,24 @@ class ComputeDeviceConfig(BaseModel):
         return v
 
 
-class VisionConfig(BaseModel):
+class VisionConfig(_SubConfig):
     chosen_model: Optional[str] = None
 
 
-class AppearanceConfig(BaseModel):
+class AppearanceConfig(_SubConfig):
     theme: str = "default"
 
 
-class PlatformInfo(BaseModel):
+class PlatformInfo(_SubConfig):
     os: str = ""
 
 
-class SupportedQuantizations(BaseModel):
+class SupportedQuantizations(_SubConfig):
     CPU: List[str] = Field(default_factory=list)
     GPU: List[str] = Field(default_factory=list)
 
 
-class DatabaseInfo(BaseModel):
+class DatabaseInfo(_SubConfig):
     model: str
     chunk_size: int
     chunk_overlap: int
@@ -100,6 +100,7 @@ class AppConfig(BaseSettings):
 
     EMBEDDING_MODEL_NAME: Optional[str] = None
     EMBEDDING_MODEL_DIMENSIONS: Optional[int] = None
+    hf_access_token: Optional[str] = None
     created_databases: Dict[str, DatabaseInfo] = Field(default_factory=dict)
 
     _config_path: Path = PrivateAttr(default=Path("config.yaml"))
@@ -133,21 +134,57 @@ class AppConfig(BaseSettings):
             instance._config_path = config_path
             instance.save(config_path)
             return instance
+        data = {}
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
-            if "created_databases" in data and isinstance(data["created_databases"], dict):
-                for db_name, db_data in data["created_databases"].items():
-                    if isinstance(db_data, dict) and not isinstance(db_data, DatabaseInfo):
+        except Exception as e:
+            print(f"Error reading config file {config_path}: {e}")
+            data = {}
+
+        if isinstance(data, dict) and isinstance(data.get("created_databases"), dict):
+            for db_name, db_data in list(data["created_databases"].items()):
+                if isinstance(db_data, dict) and not isinstance(db_data, DatabaseInfo):
+                    try:
                         data["created_databases"][db_name] = DatabaseInfo(**db_data)
+                    except Exception as e:
+                        print(f"Ignoring invalid database entry '{db_name}' in config: {e}")
+                        del data["created_databases"][db_name]
+
+        try:
             instance = cls(**data)
-            instance._config_path = config_path
-            return instance
         except Exception as e:
             print(f"Error loading config: {e}")
+            print("Preserving valid fields and using defaults for the invalid ones.")
             instance = cls()
-            instance._config_path = config_path
-            return instance
+            if isinstance(data, dict):
+                for field_name, value in data.items():
+                    try:
+                        setattr(instance, field_name, value)
+                    except Exception as fe:
+                        section = getattr(instance, field_name, None)
+                        if isinstance(section, BaseModel) and isinstance(value, dict):
+                            cls._assign_valid_values(section, field_name, value)
+                        else:
+                            print(f"  Ignoring invalid config field '{field_name}': {fe}")
+        instance._config_path = config_path
+        return instance
+
+    @staticmethod
+    def _assign_valid_values(section, section_name, values):
+        pending = dict(values)
+        for _ in range(2):
+            failed = {}
+            for key, value in pending.items():
+                try:
+                    setattr(section, key, value)
+                except Exception as e:
+                    failed[key] = (value, e)
+            pending = {key: value for key, (value, _) in failed.items()}
+            if not pending:
+                return
+        for key, (_, error) in failed.items():
+            print(f"  Ignoring invalid config value '{section_name}.{key}': {error}")
 
     def save(self, path: Optional[Path] = None) -> None:
         save_path = path or self._config_path

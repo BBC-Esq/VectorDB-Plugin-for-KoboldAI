@@ -1,113 +1,18 @@
+import faulthandler
+faulthandler.enable(all_threads=True)
+
 import multiprocessing
-if __name__ == '__main__':
-    multiprocessing.set_start_method('spawn', force=True)
+multiprocessing.set_start_method('spawn', force=True)
 
-import sys
-import os
-from pathlib import Path
-import logging
-import traceback
-from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QTabWidget,
-    QStyleFactory, QMenuBar
-)
-from core.initialize import main as initialize_system
-from gui.tabs import create_tabs
-from core.staging import clear_staged_files
-from gui.themes import list_theme_files, make_theme_changer, load_stylesheet, ensure_theme_config
-from gui.credentials import manage_credentials
+from core.gpu_guard import hide_unsupported_gpus
+hide_unsupported_gpus()
 
-try:
-    with open('test_write.txt', 'w') as f:
-        f.write("Testing write permissions")
-    os.remove('test_write.txt')
-except Exception as e:
-    print(f"Cannot write to the current directory: {e}")
+from core.native_preload import preload_native_libraries
+preload_native_libraries()
 
-logging.basicConfig(filename='gui_log.txt', level=logging.DEBUG, 
-                    format='%(asctime)s - %(levelname)s - %(message)s')
-
-def set_cuda_paths():
-    try:
-        venv_base = Path(sys.executable).parent
-        nvidia_base_path = venv_base / 'Lib' / 'site-packages' / 'nvidia'
-        for env_var in ['CUDA_PATH', 'CUDA_PATH_V12_1']:
-            current_path = os.environ.get(env_var, '')
-            os.environ[env_var] = os.pathsep.join(filter(None, [str(nvidia_base_path), current_path]))
-        logging.info("CUDA paths set successfully")
-    except Exception as e:
-        logging.error(f"Error setting CUDA paths: {str(e)}")
-        logging.debug(traceback.format_exc())
-
+from core.cuda_paths import set_cuda_paths
 set_cuda_paths()
 
-class DocQA_GUI(QWidget):
-    def __init__(self):
-        super().__init__()
-        try:
-            initialize_system()
-            self.init_ui()
-            self.init_menu()
-            logging.info("GUI initialized successfully")
-        except Exception as e:
-            logging.error(f"Error initializing GUI: {str(e)}")
-            logging.debug(traceback.format_exc())
-            raise
-
-    def init_ui(self):
-        try:
-            self.setWindowTitle('KoboldCPP VectorDB Plugin - www.chintellalaw.com')
-            self.setGeometry(300, 300, 700, 800)
-            self.setMinimumSize(350, 410)
-            
-            main_layout = QVBoxLayout(self)
-            main_layout.addWidget(create_tabs())
-            logging.info("UI initialized successfully")
-        except Exception as e:
-            logging.error(f"Error initializing UI: {str(e)}")
-            logging.debug(traceback.format_exc())
-            raise
-
-    def init_menu(self):
-        try:
-            self.menu_bar = QMenuBar(self)
-            self.layout().setMenuBar(self.menu_bar)
-            self.file_menu = self.menu_bar.addMenu('File')
-            self.theme_menu = self.file_menu.addMenu('Themes')
-            for theme in list_theme_files():
-                self.theme_menu.addAction(theme).triggered.connect(make_theme_changer(theme))
-            self.hf_token_menu = self.file_menu.addAction('Hugging Face Access Token')
-            self.hf_token_menu.triggered.connect(lambda: manage_credentials(self, 'hf'))
-            logging.info("Menu initialized successfully")
-        except Exception as e:
-            logging.error(f"Error initializing menu: {str(e)}")
-            logging.debug(traceback.format_exc())
-            raise
-
-    def closeEvent(self, event):
-        try:
-            clear_staged_files()
-            logging.info("Application closed successfully")
-            super().closeEvent(event)
-        except Exception as e:
-            logging.error(f"Error during application close: {str(e)}")
-            logging.debug(traceback.format_exc())
-
-def main():
-    try:
-        logging.info("Starting application")
-        app = QApplication(sys.argv)
-        theme = ensure_theme_config()
-        app.setStyleSheet(load_stylesheet(theme))
-        ex = DocQA_GUI()
-        ex.show()
-        logging.info("Application main window shown")
-        sys.exit(app.exec())
-    except Exception as e:
-        logging.critical(f"Critical error in main function: {str(e)}")
-        logging.debug(traceback.format_exc())
-        print(f"A critical error occurred. Please check the log file 'gui_log.txt' for details.")
-        sys.exit(1)
-
 if __name__ == '__main__':
+    from gui.main_window import main
     main()

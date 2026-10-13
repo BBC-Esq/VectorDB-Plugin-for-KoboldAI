@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import pickle
@@ -5,7 +6,6 @@ import sys
 import time
 from pathlib import Path
 
-# Ensure project root is on sys.path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 logging.basicConfig(
@@ -31,6 +31,7 @@ def main():
     t0 = time.time()
 
     from db.document_processor import load_documents
+    from core.constants import SUPPORTED_EXTENSIONS
 
     docs = load_documents(source_dir)
 
@@ -38,6 +39,16 @@ def main():
     for doc in docs:
         clean_meta = {str(k): v for k, v in doc.metadata.items()}
         doc_data.append((doc.page_content, clean_meta))
+
+    extracted_paths = {os.path.normcase(str(meta.get("file_path", ""))) for _, meta in doc_data}
+    not_extracted = []
+    for entry in source_dir.iterdir():
+        if entry.suffix.lower() in SUPPORTED_EXTENSIONS:
+            real_path = os.path.realpath(entry)
+            if os.path.normcase(real_path) not in extracted_paths:
+                not_extracted.append(os.path.basename(real_path))
+    with open(output_path.with_name(output_path.stem + "_not_extracted.json"), "w", encoding="utf-8") as f:
+        json.dump(not_extracted, f)
 
     elapsed = time.time() - t0
     logger.info(f"Extracted {len(doc_data)} documents in {elapsed:.1f}s")

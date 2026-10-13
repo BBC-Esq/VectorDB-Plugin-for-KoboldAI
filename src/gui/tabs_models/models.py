@@ -21,15 +21,6 @@ class VectorModelsTab(QWidget):
        self.downloaded_labels = {}
        self.model_radiobuttons = QButtonGroup(self)
        self.model_radiobuttons.setExclusive(True)
-       self.stretch_factors = {
-           'BAAI': 4,
-           'Google': 2,
-           'Microsoft': 3,
-           'intfloat': 4,
-           'Qwen': 4,
-           'Octen': 4,
-           'FreeLawProject': 3,
-       }
 
        (MODELS_DIR / "vector").mkdir(parents=True, exist_ok=True)
 
@@ -61,7 +52,7 @@ class VectorModelsTab(QWidget):
            group_layout.setContentsMargins(0, 10, 0, 0)
            
            size_policy = group_box.sizePolicy()
-           size_policy.setVerticalStretch(self.stretch_factors.get(vendor, 1))
+           size_policy.setVerticalStretch(1)
            group_box.setSizePolicy(size_policy)
            
            self.group_boxes[vendor] = group_box

@@ -10,7 +10,6 @@ import tempfile
 import time
 from pathlib import Path
 
-# Ensure project root is on sys.path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 logging.basicConfig(
@@ -82,6 +81,7 @@ def main():
                 max_length=max_seq_length,
                 return_tensors=None,
                 return_attention_mask=True,
+                split_special_tokens=True,
             )
             num_texts_in_batch = len(batch_raw["input_ids"])
             keys = list(batch_raw.keys())

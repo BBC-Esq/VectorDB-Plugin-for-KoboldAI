@@ -1,48 +1,14 @@
-import importlib
-import importlib.metadata
-import importlib.util
 import os
 import logging
 import sys
 from pathlib import Path
-import psutil
 import re
 
 import torch
 import yaml
-from packaging import version
 from termcolor import cprint
 
-def set_cuda_paths():
-    import sys
-    import os
-    from pathlib import Path
-    venv_base = Path(sys.executable).parent.parent
-    nvidia_base_path = venv_base / 'Lib' / 'site-packages' / 'nvidia'
-    cuda_path_runtime = nvidia_base_path / 'cuda_runtime' / 'bin'
-    cuda_path_runtime_lib = nvidia_base_path / 'cuda_runtime' / 'lib' / 'x64'
-    cuda_path_runtime_include = nvidia_base_path / 'cuda_runtime' / 'include'
-    cublas_path = nvidia_base_path / 'cublas' / 'bin'
-    cudnn_path = nvidia_base_path / 'cudnn' / 'bin'
-    nvrtc_path = nvidia_base_path / 'cuda_nvrtc' / 'bin'
-    nvcc_path = nvidia_base_path / 'cuda_nvcc' / 'bin'
-    paths_to_add = [
-        str(cuda_path_runtime),
-        str(cuda_path_runtime_lib),
-        str(cuda_path_runtime_include),
-        str(cublas_path),
-        str(cudnn_path),
-        str(nvrtc_path),
-        str(nvcc_path),
-    ]
-    current_value = os.environ.get('PATH', '')
-    new_value = os.pathsep.join(paths_to_add + ([current_value] if current_value else []))
-    os.environ['PATH'] = new_value
-
-    triton_cuda_path = nvidia_base_path / 'cuda_runtime'
-    current_cuda_path = os.environ.get('CUDA_PATH', '')
-    new_cuda_path = os.pathsep.join([str(triton_cuda_path)] + ([current_cuda_path] if current_cuda_path else []))
-    os.environ['CUDA_PATH'] = new_cuda_path
+from core.cuda_paths import set_cuda_paths
 
 
 def clean_triton_cache():
@@ -132,103 +98,6 @@ def normalize_chat_text(text):
 
     return text.strip()
 
-def test_triton_installation():
-   logging.debug("Starting Triton installation test")
-   try:
-       import torch
-       import triton
-       import triton.language as tl
-       logging.debug("Successfully imported required packages")
-
-       @triton.jit
-       def add_kernel(x_ptr, y_ptr, output_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
-           pid = tl.program_id(axis=0)
-           block_start = pid * BLOCK_SIZE
-           offsets = block_start + tl.arange(0, BLOCK_SIZE)
-           mask = offsets < n_elements
-           x = tl.load(x_ptr + offsets, mask=mask)
-           y = tl.load(y_ptr + offsets, mask=mask)
-           output = x + y
-           tl.store(output_ptr + offsets, output, mask=mask)
-
-       logging.debug("Defined Triton kernel for addition")
-
-       def add(x: torch.Tensor, y: torch.Tensor):
-           output = torch.empty_like(x)
-           assert x.is_cuda and y.is_cuda and output.is_cuda
-           n_elements = output.numel()
-           grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
-           add_kernel[grid](x, y, output, n_elements, BLOCK_SIZE=1024)
-           return output
-
-       logging.debug("Defined wrapper function for Triton kernel")
-       print("Testing Triton installation...")
-
-       a = torch.rand(3, device="cuda")
-       logging.debug("Created test tensor on CUDA device")
-
-       b = a + a
-       logging.debug("Computed PyTorch native addition")
-
-       b_compiled = add(a, a)
-       logging.debug("Computed Triton kernel addition")
-
-       difference = b_compiled - b
-       works = torch.all(difference == 0).item()
-       logging.debug(f"Test result: {'passed' if works else 'failed'}")
-
-       if works:
-           print("✓ Triton is working correctly")
-       else:
-           print("⨯ Triton test failed - results do not match PyTorch implementation. Please visit the Windows Triton repository")
-           print("here and review the instructions for installing any necessary dependencies: https://github.com/woct0rdho/triton-windows")
-       return works
-
-   except Exception as e:
-       logging.debug(f"Triton test failed with error: {str(e)}")
-       print(f"⨯ Triton test failed - error occurred: {str(e)}")
-       return False
-
-def supports_flash_attention():
-    logging.debug("Checking flash attention support")
-
-    if not torch.cuda.is_available():
-        logging.debug("CUDA not available, flash attention not supported")
-        return False
-
-    major, minor = torch.cuda.get_device_capability()
-    logging.debug(f"CUDA compute capability: {major}.{minor}")
-
-    supports = major >= 8
-    logging.debug(f"Flash attention {'supported' if supports else 'not supported'}")
-    return supports
-
-def check_cuda_re_triton():
-    logging.debug("Starting CUDA files check for Triton")
-    venv_base = Path(sys.executable).parent.parent
-    nvidia_base_path = venv_base / 'Lib' / 'site-packages' / 'nvidia'
-    cuda_runtime = nvidia_base_path / 'cuda_runtime'
-
-    logging.debug(f"Virtual environment base path: {venv_base}")
-    logging.debug(f"NVIDIA base path: {nvidia_base_path}")
-    logging.debug(f"CUDA runtime path: {cuda_runtime}")
-
-    files_to_check = [
-        cuda_runtime / "bin" / "cudart64_12.dll",
-        cuda_runtime / "bin" / "ptxas.exe",
-        cuda_runtime / "include" / "cuda.h",
-        cuda_runtime / "lib" / "x64" / "cuda.lib"
-    ]
-
-    logging.debug("Beginning file existence checks")
-    print("Checking CUDA files:")
-    for file_path in files_to_check:
-        exists = file_path.exists()
-        status = "✓ Found" if exists else "✗ Missing"
-        logging.debug(f"Checking {file_path}: {'exists' if exists else 'missing'}")
-        print(f"{status}: {file_path}")
-    print()
-    logging.debug("CUDA file check completed")
 
 def get_model_native_precision(embedding_model_name, vector_models=None):
     if vector_models is None:
@@ -317,11 +186,6 @@ def get_appropriate_dtype(compute_device, use_half, model_native_precision):
         logging.debug(f"Unrecognized precision '{model_native_precision}', returning float32")
         return torch.float32
 
-def print_first_citation_metadata(metadata_list):
-    if metadata_list:
-        print("Metadata attributes/fields for the first citation:")
-        for key, value in metadata_list[0].items():
-            print(f"{key}: {value}")
 
 def format_citations(metadata_list):
     def group_metadata(metadata_list):
@@ -378,12 +242,6 @@ def format_citations(metadata_list):
 
     return f"<ol>{list_items}</ol>"
 
-def count_physical_cores():
-    return psutil.cpu_count(logical=False)
-
-def load_config(config_file):
-    with open(config_file, 'r') as file:
-        return yaml.safe_load(file)
 
 def save_config_atomically(config_data, config_path, **dump_kwargs):
     config_path = Path(config_path)
@@ -410,28 +268,6 @@ def my_cprint(*args, **kwargs):
     kwargs['flush'] = True
     cprint(modified_message, *args[1:], **kwargs)
 
-def get_cuda_compute_capabilities():
-   logging.debug("Getting CUDA compute capabilities")
-   ccs = []
-   device_count = torch.cuda.device_count()
-   logging.debug(f"Found {device_count} CUDA device(s)")
-
-   for i in range(device_count):
-       device = torch.cuda.device(i)
-       cc_major, cc_minor = torch.cuda.get_device_capability(device)
-       compute_capability = f"{cc_major}.{cc_minor}"
-       logging.debug(f"Device {i} compute capability: {compute_capability}")
-       ccs.append(compute_capability)
-
-   logging.debug(f"All compute capabilities: {ccs}")
-   return ccs
-
-def get_cuda_version():
-   logging.debug("Getting CUDA version")
-   major, minor = map(int, torch.version.cuda.split("."))
-   version = f'{major}{minor}'
-   logging.debug(f"CUDA version {major}.{minor} -> {version}")
-   return version
 
 def has_bfloat16_support():
    logging.debug("Checking bfloat16 support")
@@ -446,6 +282,18 @@ def has_bfloat16_support():
    has_support = capability >= (8, 0)
    logging.debug(f"bfloat16 {'supported' if has_support else 'not supported'}")
    return has_support
+
+def cuda_usable():
+    return torch.cuda.is_available()
+
+def runs_on_this_hardware(model_info):
+    return not (model_info or {}).get("requires_cuda", False) or cuda_usable()
+
+def fallback_if_unavailable(saved_key, registry, default_key):
+    if saved_key in registry and runs_on_this_hardware(registry[saved_key]):
+        return saved_key
+    return default_key
+
 
 def usable_whisper_models():
     from core.constants import WHISPER_MODELS
@@ -464,96 +312,6 @@ def usable_whisper_models():
             usable.append(model_name)
     return usable
 
-def get_precision():
-   logging.debug("Determining appropriate precision based on GPU capability")
-
-   if not torch.cuda.is_available():
-       logging.debug("CUDA not available")
-       raise RuntimeError("CUDA is not available. This function requires a CUDA-enabled GPU.")
-
-   capability = torch.cuda.get_device_capability()
-   logging.debug(f"CUDA compute capability: {capability}")
-
-   if capability >= (8, 0):
-       precision = torch.bfloat16
-       logging.debug("Using bfloat16 precision (Ampere or newer GPU)")
-   else:
-       precision = torch.float16
-       logging.debug("Using float16 precision (pre-Ampere GPU)")
-
-   return precision
-
-def get_device_and_precision():
-   logging.debug("Determining device and precision")
-
-   if torch.cuda.is_available():
-       device = "cuda"
-       logging.debug("CUDA device available")
-
-       capability = torch.cuda.get_device_capability()
-       logging.debug(f"CUDA compute capability: {capability}")
-
-       if capability >= (8, 0):
-           precision = "bfloat16"
-           logging.debug("Using bfloat16 precision (Ampere or newer GPU)")
-       else:
-           precision = "float16"
-           logging.debug("Using float16 precision (pre-Ampere GPU)")
-   else:
-       device = "cpu"
-       precision = "float32"
-       logging.debug("Using CPU with float32 precision")
-
-   logging.debug(f"Final configuration - Device: {device}, Precision: {precision}")
-   return device, precision
-
-class FlashAttentionUtils:
-    @staticmethod
-    def check_package_availability():
-        return importlib.util.find_spec("flash_attn") is not None
-
-    @staticmethod
-    def check_version_compatibility():
-        if not FlashAttentionUtils.check_package_availability():
-            return False
-        flash_attention_version = version.parse(importlib.metadata.version("flash_attn"))
-        if torch.version.cuda:
-            return flash_attention_version >= version.parse("2.1.0")
-        elif torch.version.hip:
-            return flash_attention_version >= version.parse("2.0.4")
-        return False
-
-    @staticmethod
-    def check_dtype_compatibility(dtype):
-        return dtype in [torch.float16, torch.bfloat16]
-
-    @staticmethod
-    def check_gpu_initialization():
-        return torch.cuda.is_available() and torch.cuda.current_device() >= 0
-
-    @staticmethod
-    def check_device_map(device_map):
-        if device_map is None:
-            return True
-        if isinstance(device_map, dict):
-            return "cpu" not in device_map.values() and "disk" not in device_map.values()
-        return True
-
-    @classmethod
-    def is_flash_attention_compatible(cls, dtype=None, device_map=None):
-        checks = [
-            cls.check_package_availability(),
-            cls.check_version_compatibility(),
-            cls.check_dtype_compatibility(dtype) if dtype else True,
-            cls.check_gpu_initialization(),
-            cls.check_device_map(device_map)
-        ]
-        return all(checks)
-
-    @staticmethod
-    def enable_flash_attention(config):
-        config._attn_implementation = "flash_attention_2"
-        return config
 
 def set_logging_level():
     library_levels = {
@@ -563,7 +321,6 @@ def set_logging_level():
         "datasets": logging.WARNING,
         "einops": logging.WARNING,
         "einx": logging.WARNING,
-        "flash_attn": logging.WARNING,
         "huggingface-hub": logging.WARNING,
         "numpy": logging.WARNING,
         "openai": logging.WARNING,
@@ -584,11 +341,8 @@ def set_logging_level():
         "torchaudio": logging.WARNING,
         "torchvision": logging.WARNING,
         "transformers": logging.WARNING,
-        "unstructured": logging.WARNING,
-        "unstructured-client": logging.WARNING,
         "vector-quantize-pytorch": logging.WARNING,
-        "vocos": logging.WARNING,
-        "xformers": logging.WARNING
+        "vocos": logging.WARNING
     }
 
     for lib, level in library_levels.items():
@@ -604,65 +358,6 @@ def prepare_long_path(base_path: str, filename: str) -> str:
     return full_path
 
 
-def normalize_text(text, preserve_whitespace=False):
-    import unicodedata
-
-    if text is None:
-        return None
-
-    if isinstance(text, (list, tuple)):
-        text = " ".join(str(item) for item in text if item is not None)
-
-    if not isinstance(text, str):
-        text = str(text)
-
-    text = unicodedata.normalize("NFKC", text)
-
-    INVISIBLE_CHARS = {
-        '­', '​', '‌', '‍', '‎', '‏',
-        '⁠', '⁡', '⁢', '⁣', '⁤', '﻿',
-    }
-
-    cleaned = []
-    for char in text:
-        code = ord(char)
-        if char == '\n' or char == '\t':
-            if preserve_whitespace:
-                cleaned.append(char)
-            else:
-                cleaned.append(' ')
-        elif char == '\r':
-            cleaned.append(' ')
-        elif code < 32:
-            continue
-        elif code == 127:
-            continue
-        elif code > 65535:
-            continue
-        elif char in INVISIBLE_CHARS:
-            continue
-        elif 128 <= code <= 159:
-            continue
-        elif code == 65533:
-            continue
-        elif 57344 <= code <= 63743:
-            continue
-        else:
-            cleaned.append(char)
-
-    result = "".join(cleaned)
-
-    if preserve_whitespace:
-        result = re.sub(r'[^\S\n\t]+', ' ', result)
-        result = re.sub(r' *\n *', '\n', result)
-        result = re.sub(r'\n{3,}', '\n\n', result)
-    else:
-        result = " ".join(result.split())
-
-    result = result.strip()
-    return result if result else None
-
-
 def get_embedding_batch_size(model_name: str, compute_device: str) -> int:
     if compute_device.lower() == 'cpu':
         return 2
@@ -670,6 +365,11 @@ def get_embedding_batch_size(model_name: str, compute_device: str) -> int:
     batch_size_mapping = {
         'harrier-oss-v1-0.6b': 4,
         'harrier-oss-v1-270m': 10,
+        'Jasper-Token-Compression-600M': 4,
+        'Yuan-embedding-2.0-en': 4,
+        'F2LLM-v2-1.7B': 4,
+        'F2LLM-v2-4B': 3,
+        'geevec-embeddings-1.0-lite': 4,
         'Qwen3-Embedding-8B': 2,
         'Qwen3-Embedding-4B': 3,
         'Qwen3-Embedding-0.6B': 4,
@@ -695,6 +395,17 @@ def get_embedding_batch_size(model_name: str, compute_device: str) -> int:
     return 8
 
 
+def quiet_transformers_loading_bars():
+    from transformers.utils import logging as transformers_logging
+
+    def _hook(factory, args, kwargs):
+        if kwargs.get("desc") == "Loading weights":
+            kwargs = {**kwargs, "disable": True}
+        return factory(*args, **kwargs)
+
+    transformers_logging.set_tqdm_hook(_hook)
+
+
 def get_embedding_dtype_and_batch(
     compute_device: str,
     use_half: bool,
@@ -703,6 +414,8 @@ def get_embedding_dtype_and_batch(
     is_query: bool,
 ):
     dtype = get_appropriate_dtype(compute_device, use_half, model_native_precision)
+    if dtype == torch.float16 and _is_fp16_unsafe(model_name):
+        dtype = torch.float32
     batch = 1 if is_query else get_embedding_batch_size(model_name, compute_device)
     return dtype, batch
 
@@ -719,3 +432,10 @@ def configure_logging(level: str = "INFO"):
     )
     h.setFormatter(fmt)
     root.addHandler(h)
+
+
+def _is_fp16_unsafe(embedding_model_name):
+    from core.constants import VECTOR_MODELS
+    repo_style_name = os.path.basename(embedding_model_name).replace('--', '/')
+    return any(model.get('fp16_unsafe') for group_models in VECTOR_MODELS.values()
+               for model in group_models if model['repo_id'] == repo_style_name)
