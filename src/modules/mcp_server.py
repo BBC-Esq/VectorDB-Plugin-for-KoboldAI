@@ -16,7 +16,7 @@ SERVER_NAME = "vectordb-plugin"
 SERVER_VERSION = "1.0.0"
 
 CONTEXTS = 5
-SIMILARITY = 0.7
+SIMILARITY = 0.5
 
 TOOLS = [
     {

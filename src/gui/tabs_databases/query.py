@@ -129,7 +129,7 @@ class DatabaseQueryTab(QWidget):
         row1.addSpacing(12)
 
         row1.addWidget(QLabel("Similarity:"))
-        self.similarity_edit = QLineEdit(str(db_cfg.get("similarity", 0.7)))
+        self.similarity_edit = QLineEdit(str(db_cfg.get("similarity", 0.5)))
         validator = QDoubleValidator(0.0, 1.0, 3, self)
         validator.setNotation(QDoubleValidator.StandardNotation)
         self.similarity_edit.setValidator(validator)
