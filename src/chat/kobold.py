@@ -17,6 +17,8 @@ ROOT_DIRECTORY = PROJECT_ROOT
 contexts_output_file_path = ROOT_DIRECTORY / "contexts.txt"
 metadata_output_file_path = ROOT_DIRECTORY / "metadata.txt"
 
+KOBOLD_URL = "http://localhost:5001"
+
 class KoboldSignals(QObject):
     response_signal = Signal(str)
     error_signal = Signal(str)
@@ -73,11 +75,18 @@ class KoboldChat:
         self.signals = KoboldSignals()
         self.config = self.load_configuration()
         self.query_vector_db = None
-        self.api_url = "http://localhost:5001/api/extra/generate/stream"
+        self.api_url = f"{KOBOLD_URL}/api/extra/generate/stream"
 
     def load_configuration(self):
         with open('config.yaml', 'r') as config_file:
             return yaml.safe_load(config_file)
+
+    def kobold_is_running(self):
+        try:
+            requests.get(f"{KOBOLD_URL}/api/extra/version", timeout=3)
+            return True
+        except requests.exceptions.RequestException:
+            return False
 
     def connect_to_kobold(self, augmented_query):
         payload = {
@@ -140,7 +149,6 @@ class KoboldChat:
             return full_response
         except Exception as e:
             logging.error(f"Error in Kobold API request: {str(e)}")
-            self.signals.error_signal.emit(f"API error: {str(e)}")
             raise
 
     def handle_response_and_cleanup(self, full_response, metadata_list):
@@ -161,6 +169,14 @@ class KoboldChat:
                 output_file.write(f"{metadata}\n")
 
     def ask_kobold(self, query, selected_database):
+        if not self.kobold_is_running():
+            self.signals.error_signal.emit(
+                f"Could not connect to KoboldCpp at {KOBOLD_URL}. Make sure KoboldCpp is "
+                "running and has finished loading its model, then try again."
+            )
+            self.signals.finished_signal.emit()
+            return
+
         if self.query_vector_db is None or self.query_vector_db.selected_database != selected_database:
             self.query_vector_db = QueryVectorDB(selected_database)
 
