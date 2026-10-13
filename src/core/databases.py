@@ -155,12 +155,14 @@ def build_command(database_name):
 
 
 def start_build(database_name):
-    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    env = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"}
     return subprocess.Popen(
         build_command(database_name),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         bufsize=1,
         cwd=str(PROJECT_ROOT),
         env=env,
