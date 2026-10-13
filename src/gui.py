@@ -13,7 +13,8 @@ from PySide6.QtWidgets import (
 )
 from core.initialize import main as initialize_system
 from gui.tabs import create_tabs
-from core.utilities import list_theme_files, make_theme_changer, load_stylesheet, ensure_theme_config
+from core.staging import clear_staged_files
+from gui.themes import list_theme_files, make_theme_changer, load_stylesheet, ensure_theme_config
 from gui.credentials import manage_credentials
 
 try:
@@ -85,10 +86,7 @@ class DocQA_GUI(QWidget):
 
     def closeEvent(self, event):
         try:
-            docs_dir = Path(__file__).parent / 'Docs_for_DB'
-            for item in docs_dir.glob('*'):
-                if item.is_file():
-                    item.unlink()
+            clear_staged_files()
             logging.info("Application closed successfully")
             super().closeEvent(event)
         except Exception as e:

@@ -2,22 +2,15 @@ import importlib
 import importlib.metadata
 import importlib.util
 import os
-import threading
 import logging
-import platform
-import shutil
 import sys
 from pathlib import Path
-import pickle
 import psutil
-import subprocess
 import re
 
 import torch
 import yaml
 from packaging import version
-from PySide6.QtCore import QRunnable, QObject, Signal, QThreadPool
-from PySide6.QtWidgets import QApplication, QMessageBox
 from termcolor import cprint
 
 def set_cuda_paths():
@@ -70,70 +63,6 @@ def clean_triton_cache():
     else:
         print("\nNo Triton cache found to clean.")
         return True
-
-def check_pdfs_for_ocr(script_dir):
-    import pymupdf
-    import tempfile
-    from datetime import datetime
-    from PySide6.QtWidgets import QPushButton
-
-    documents_dir = script_dir / "Docs_for_DB"
-    pdf_paths = [f for f in documents_dir.iterdir() if f.suffix.lower() == '.pdf']
-    if not pdf_paths:
-        return True, ""
-
-    non_ocr_pdfs = []
-    for pdf_path in pdf_paths:
-        try:
-            doc = pymupdf.open(str(pdf_path))
-            has_text = False
-            for page in doc:
-                if page.get_text().strip():
-                    has_text = True
-                    break
-            if not has_text:
-                non_ocr_pdfs.append(pdf_path)
-        except Exception as e:
-            logging.error(f"Error checking PDF {pdf_path}: {str(e)}")
-            continue
-
-    if non_ocr_pdfs:
-        message = "The following PDF files appear to have no text content and likelyk need OCR done on them:\n\n"
-        for pdf_path in non_ocr_pdfs:
-            message += f"  - {pdf_path}\n"
-        message += "\nPlease perform OCR on these by going to the Tools Tab first or remove them from the files selected for processing."
-
-        msg_box = QMessageBox()
-        msg_box.setWindowTitle("PDFs Need OCR")
-        msg_box.setText(message)
-        msg_box.setIcon(QMessageBox.Icon.Warning)
-
-        msg_box.addButton(QMessageBox.StandardButton.Ok)
-        view_report_button = msg_box.addButton("View Report", QMessageBox.ButtonRole.ActionRole)
-
-        result = msg_box.exec()
-
-        if msg_box.clickedButton() == view_report_button:
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp_file:
-                temp_file.write("PDFs that need OCR:\n\n")
-                for pdf_path in non_ocr_pdfs:
-                    temp_file.write(f"{pdf_path}\n")
-                temp_path = temp_file.name
-
-            os.startfile(temp_path)
-
-            def cleanup_temp_file():
-                try:
-                    os.unlink(temp_path)
-                except:
-                    pass
-
-            threading.Timer(1.0, cleanup_temp_file).start()
-
-        return False, "PDFs without text content detected."
-
-    return True, ""
-
 
 def normalize_chat_text(text):
     def split_num(num):
@@ -456,141 +385,12 @@ def load_config(config_file):
     with open(config_file, 'r') as file:
         return yaml.safe_load(file)
 
-def list_theme_files():
-    from core.constants import THEMES
-    return sorted(THEMES.keys())
-
-def load_stylesheet(name):
-    from string import Template
-    from core.constants import PROJECT_ROOT, THEMES
-    if name not in THEMES:
-        name = 'default'
-    template_path = PROJECT_ROOT / 'CSS' / 'template.css'
-    with template_path.open('r') as f:
-        template = Template(f.read())
-    return template.substitute(THEMES[name])
-
-def ensure_theme_config():
-    from core.constants import THEMES
-    try:
-        with open('config.yaml', 'r') as f:
-            config = yaml.safe_load(f)
-
-        if config is None:
-            config = {}
-
-        if 'appearance' not in config:
-            config['appearance'] = {}
-
-        theme = config['appearance'].get('theme')
-        if not theme or theme not in THEMES:
-            config['appearance']['theme'] = 'default'
-
-        with open('config.yaml', 'w') as f:
-            yaml.safe_dump(config, f)
-
-        return config['appearance']['theme']
-    except Exception:
-        return 'default'
-
-def update_theme_in_config(new_theme):
-    try:
-        with open('config.yaml', 'r') as f:
-            config = yaml.safe_load(f)
-
-        if config is None:
-            config = {}
-
-        if 'appearance' not in config:
-            config['appearance'] = {}
-
-        config['appearance']['theme'] = new_theme
-
-        with open('config.yaml', 'w') as f:
-            yaml.safe_dump(config, f)
-    except Exception:
-        pass
-
-def make_theme_changer(theme_name):
-    def change_theme():
-        QApplication.instance().setStyleSheet(load_stylesheet(theme_name))
-        update_theme_in_config(theme_name)
-    return change_theme
-
 def save_config_atomically(config_data, config_path, **dump_kwargs):
     config_path = Path(config_path)
     tmp = config_path.with_name(config_path.name + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         yaml.safe_dump(config_data, f, **dump_kwargs)
     os.replace(tmp, config_path)
-
-def open_file(file_path):
-    try:
-        if platform.system() == "Windows":
-            os.startfile(file_path)
-        elif platform.system() == "Darwin":
-            subprocess.Popen(["open", file_path])
-        else:
-            subprocess.Popen(["xdg-open", file_path])
-    except OSError:
-        QMessageBox.warning(None, "Error", "No default viewer detected.")
-
-def delete_file(file_path):
-    try:
-        os.remove(file_path)
-    except OSError:
-        QMessageBox.warning(None, "Unable to delete file(s), please delete manually.")
-
-def check_preconditions_for_db_creation(script_dir, database_name, skip_ocr=False):
-    if not database_name or len(database_name) < 3 or database_name.lower() in ["null", "none"]:
-        return False, "Name must be at least 3 characters long and not be 'null' or 'none.'"
-
-    vector_db_path = script_dir / "Vector_DB" / database_name
-    if vector_db_path.exists():
-        return False, (
-            f"A vector database called '{database_name}' already exists—"
-            "choose a different name or delete the old one first."
-        )
-
-    config_path = script_dir / 'config.yaml'
-    if not config_path.exists():
-        return False, "The configuration file (config.yaml) is missing."
-
-    with open(config_path, 'r') as file:
-        config = yaml.safe_load(file)
-
-    image_extensions = ['.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tif', '.tiff']
-    documents_dir = script_dir / "Docs_for_DB"
-    if platform.system() == "Darwin" and any(file.suffix in image_extensions for file in documents_dir.iterdir() if file.is_file()):
-        return False, "Image processing has been disabled for MacOS until a fix can be implemented. Please remove all image files and try again."
-
-    embedding_model_name = config.get('EMBEDDING_MODEL_NAME')
-    if not embedding_model_name:
-        return False, "You must first download an embedding model, select it, and choose documents before proceeding."
-
-    if not any(file.is_file() for file in documents_dir.iterdir()):
-        return False, "No documents are yet added to be processed."
-
-    compute_device = config.get('Compute_Device', {}).get('available', [])
-    database_creation = config.get('Compute_Device', {}).get('database_creation')
-    if ("cuda" in compute_device or "mps" in compute_device) and database_creation == "cpu":
-        return False, ("GPU-acceleration is available and strongly recommended. "
-                       "Please switch the database creation device to 'cuda' or 'mps', "
-                       "or confirm your choice in the GUI.")
-
-    if not torch.cuda.is_available():
-        if config.get('database', {}).get('half', False):
-            message = ("CUDA is not available on your system, but half-precision (FP16) "
-                       "is selected for database creation. Half-precision requires CUDA. "
-                       "Please disable half-precision in the configuration or use a CUDA-enabled GPU.")
-            return False, message
-
-    if not skip_ocr:
-        ocr_check, ocr_message = check_pdfs_for_ocr(script_dir)
-        if not ocr_check:
-            return False, ocr_message
-
-    return True, ""
 
 def check_preconditions_for_submit_question(script_dir):
     config_path = script_dir / 'config.yaml'
@@ -646,6 +446,23 @@ def has_bfloat16_support():
    has_support = capability >= (8, 0)
    logging.debug(f"bfloat16 {'supported' if has_support else 'not supported'}")
    return has_support
+
+def usable_whisper_models():
+    from core.constants import WHISPER_MODELS
+
+    cuda_available = torch.cuda.is_available()
+    bfloat16_supported = has_bfloat16_support()
+
+    usable = []
+    for model_name, model_info in WHISPER_MODELS.items():
+        precision = model_info['precision']
+        if precision == 'float32':
+            usable.append(model_name)
+        elif precision == 'bfloat16' and bfloat16_supported:
+            usable.append(model_name)
+        elif precision == 'float16' and cuda_available:
+            usable.append(model_name)
+    return usable
 
 def get_precision():
    logging.debug("Determining appropriate precision based on GPU capability")

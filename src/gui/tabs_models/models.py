@@ -1,6 +1,3 @@
-import threading
-from pathlib import Path
-
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
@@ -8,7 +5,8 @@ from PySide6.QtWidgets import (
 )
 
 from core.constants import VECTOR_MODELS, TOOLTIPS
-from gui.download_model import ModelDownloader, model_downloaded_signal
+from core.downloads import MODELS_DIR, downloaded_vector_model_names, model_directory_name
+from gui.download_model import model_downloaded_signal, start_download
 
 class VectorModelsTab(QWidget):
     DOWNLOAD_BUTTON_LABEL = "Download Selected Model"
@@ -33,15 +31,9 @@ class VectorModelsTab(QWidget):
            'FreeLawProject': 3,
        }
 
-       models_dir = Path('Models')
-       if not models_dir.exists():
-           models_dir.mkdir(parents=True)
+       (MODELS_DIR / "vector").mkdir(parents=True, exist_ok=True)
 
-       vector_models_dir = models_dir / "vector"
-       if not vector_models_dir.exists():
-           vector_models_dir.mkdir(parents=True)
-
-       existing_vector_directories = {d.name for d in vector_models_dir.iterdir() if d.is_dir()}
+       existing_vector_directories = downloaded_vector_model_names()
 
        headers = ["Select", "Model Name", "Original Precision", "Parameters", "Dimensions", "Max Sequence", "Size (MB)", "Downloaded"]
        column_stretch_factors = [1, 2, 2, 1, 1, 1, 1, 1]
@@ -124,12 +116,7 @@ class VectorModelsTab(QWidget):
                size_label.setToolTip(TOOLTIPS.get("VECTOR_MODEL_SIZE", ""))
                add_centered_widget(grid, size_label, row, 6)
 
-               if 'cache_dir' in model:
-                   expected_dir_name = model['cache_dir']
-               else:
-                   expected_dir_name = ModelDownloader(model_info, model['type']).get_model_directory_name()
-               
-               is_downloaded = expected_dir_name in existing_vector_directories
+               is_downloaded = model_directory_name(model_info) in existing_vector_directories
                downloaded_label = QLabel('Yes' if is_downloaded else 'No')
                downloaded_label.setToolTip(TOOLTIPS.get("VECTOR_MODEL_DOWNLOADED", ""))
                add_centered_widget(grid, downloaded_label, row, 7)
@@ -172,8 +159,7 @@ class VectorModelsTab(QWidget):
        self.download_button.setEnabled(False)
        self.download_button.setText(self.DOWNLOAD_BUTTON_BUSY_LABEL)
 
-       model_downloader = ModelDownloader(model_info, model_info['type'])
-       threading.Thread(target=model_downloader.download, daemon=True).start()
+       start_download(model_info, model_info['type'])
 
     def _reset_download_button(self):
        self.download_button.setEnabled(True)
@@ -186,17 +172,9 @@ class VectorModelsTab(QWidget):
     def update_model_downloaded_status(self, model_name, model_type):
        self._reset_download_button()
 
-       models_dir = Path('Models')
-       vector_models_dir = models_dir / "vector"
-
-       existing_vector_directories = {d.name for d in vector_models_dir.iterdir() if d.is_dir()}
-
        for vendor, models in VECTOR_MODELS.items():
            for model in models:
-               cache_dir = model.get('cache_dir', '')
-               generated_dir = model['repo_id'].replace('/', '--')
-
-               if cache_dir == model_name or generated_dir == model_name:
+               if model_directory_name(model) == model_name:
                    key = f"{vendor}/{model['name']}"
                    if key in self.downloaded_labels:
                        downloaded_label, _, _ = self.downloaded_labels[key]

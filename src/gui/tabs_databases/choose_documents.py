@@ -1,8 +1,6 @@
 from pathlib import Path
-from multiprocessing import Pool, cpu_count
 
-import yaml
-from PySide6.QtCore import QElapsedTimer, QThread, Signal, Qt
+from PySide6.QtCore import QThread, Signal, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -15,34 +13,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 
-from db.create_symlinks import _create_single_symlink
 from core.constants import PROJECT_ROOT
-
-ALLOWED_EXTENSIONS = {
-    ".pdf",
-    ".docx",
-    ".txt",
-    ".eml",
-    ".msg",
-    ".csv",
-    ".xls",
-    ".xlsx",
-    ".xlsm",
-    ".rtf",
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".bmp",
-    ".gif",
-    ".tif",
-    ".tiff",
-    ".html",
-    ".htm",
-    ".md",
-}
-
-DOCS_FOLDER = "Docs_for_DB"
-CONFIG_FILE = "config.yaml"
+from core.staging import DOCS_DIR, collect_files, is_supported, stage_files
 
 
 class SymlinkWorker(QThread):
@@ -51,72 +23,16 @@ class SymlinkWorker(QThread):
 
     def __init__(self, source, target_dir, parent=None):
         super().__init__(parent)
-        self.source = source
+        self.source = list(source)
         self.target_dir = Path(target_dir)
 
     def run(self):
-        if isinstance(self.source, (str, Path)):
-            dir_path = Path(self.source)
-            try:
-                import os
-                filenames = os.listdir(str(dir_path))
-                files = [
-                    str(dir_path / filename)
-                    for filename in filenames
-                    if (dir_path / filename).is_file() 
-                    and (dir_path / filename).suffix.lower() in ALLOWED_EXTENSIONS
-                ]
-            except OSError:
-                files = []
-                print(f"Error accessing directory {dir_path}")
-        else:
-            files = list(self.source)
-
-        total = len(files)
-        made = 0
-        errors = []
-        last_pct = -1
-        timer = QElapsedTimer()
-        timer.start()
-        step = max(1, total // 100) if total else 1
-
-        if total > 1000:
-            processes = min((total // 10000) + 1, cpu_count())
-            file_args = [(f, str(self.target_dir)) for f in files]
-            with Pool(processes=processes) as pool:
-                for i, (ok, err) in enumerate(
-                    pool.imap_unordered(_create_single_symlink, file_args), 1
-                ):
-                    if self.isInterruptionRequested():
-                        pool.terminate()
-                        break
-                    if ok:
-                        made += 1
-                    if err:
-                        errors.append(err)
-                    if i % step == 0 or i == total:
-                        pct = int(i * 100 / total) if total else 100
-                        if pct != last_pct and timer.elapsed() > 500:
-                            self.progress.emit(pct)
-                            last_pct = pct
-                            timer.restart()
-        else:
-            for f in files:
-                if self.isInterruptionRequested():
-                    break
-
-                ok, err = _create_single_symlink((f, str(self.target_dir)))
-                if ok:
-                    made += 1
-                if err:
-                    errors.append(err)
-                if made % step == 0 or made == total:
-                    pct = int(made * 100 / total) if total else 100
-                    if pct != last_pct and timer.elapsed() > 500:
-                        self.progress.emit(pct)
-                        last_pct = pct
-                        timer.restart()
-
+        made, errors = stage_files(
+            self.source,
+            self.target_dir,
+            on_progress=self.progress.emit,
+            should_stop=self.isInterruptionRequested,
+        )
         self.finished.emit(made, errors)
 
 
@@ -130,7 +46,7 @@ def choose_documents_directory():
         return
 
     current_dir = PROJECT_ROOT
-    target_dir = current_dir / DOCS_FOLDER
+    target_dir = DOCS_DIR
     target_dir.mkdir(parents=True, exist_ok=True)
 
     msg_box = QMessageBox()
@@ -138,7 +54,7 @@ def choose_documents_directory():
     msg_box.setText("Would you like to select a directory or individual files?")
 
     dir_button = msg_box.addButton("Select Directory", QMessageBox.ActionRole)
-    files_button = msg_box.addButton("Select Files", QMessageBox.ActionRole)
+    msg_box.addButton("Select Files", QMessageBox.ActionRole)
     cancel_button = msg_box.addButton("Cancel", QMessageBox.RejectRole)
 
     msg_box.exec()
@@ -194,18 +110,9 @@ def choose_documents_directory():
             None, "Choose Directory for Database", str(current_dir)
         )
         if selected_dir:
-            selected_path = Path(selected_dir)
-
-            top_level_files = [
-                str(p) for p in selected_path.iterdir()
-                if p.is_file() and p.suffix.lower() in ALLOWED_EXTENSIONS
-            ]
-            subdirectory_files = [
-                str(p) for p in selected_path.rglob("*")
-                if p.is_file()
-                and p.parent != selected_path
-                and p.suffix.lower() in ALLOWED_EXTENSIONS
-            ]
+            selection = collect_files([selected_dir])
+            top_level_files = selection.top_level
+            subdirectory_files = selection.nested
 
             include_subdirs = False
             if subdirectory_files:
@@ -243,7 +150,7 @@ def choose_documents_directory():
             incompatible_files = []
             for file_path in file_paths:
                 path = Path(file_path)
-                if path.suffix.lower() in ALLOWED_EXTENSIONS:
+                if is_supported(path):
                     compatible_files.append(str(path))
                 else:
                     incompatible_files.append(path.name)
@@ -289,27 +196,6 @@ def show_incompatible_files_dialog(incompatible_files):
     cancel_button.clicked.connect(incompatible_dialog.reject)
 
     return incompatible_dialog.exec() == QDialog.Accepted
-
-
-def load_config():
-    with open(CONFIG_FILE, "r", encoding="utf-8") as stream:
-        return yaml.safe_load(stream)
-
-
-def select_embedding_model_directory():
-    initial_dir = Path("Models") if Path("Models").exists() else Path.home()
-    chosen_directory = QFileDialog.getExistingDirectory(
-        None, "Select Embedding Model Directory", str(initial_dir)
-    )
-    if chosen_directory:
-        config_file_path = Path(CONFIG_FILE)
-        config_data = (
-            yaml.safe_load(config_file_path.read_text(encoding="utf-8"))
-            if config_file_path.exists()
-            else {}
-        )
-        config_data["EMBEDDING_MODEL_NAME"] = chosen_directory
-        config_file_path.write_text(yaml.dump(config_data), encoding="utf-8")
 
 
 def _get_main_window():

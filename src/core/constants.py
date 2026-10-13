@@ -48,6 +48,29 @@ SUPPORTED_EXTENSIONS = (
     ".xls", ".xlsx", ".xlsm", ".rtf", ".md", ".html", ".htm",
 )
 
+ALLOWED_EXTENSIONS = {
+    ".pdf",
+    ".docx",
+    ".txt",
+    ".eml",
+    ".msg",
+    ".csv",
+    ".xls",
+    ".xlsx",
+    ".xlsm",
+    ".rtf",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".bmp",
+    ".gif",
+    ".tif",
+    ".tiff",
+    ".html",
+    ".htm",
+    ".md",
+}
+
 THEMES = {
     "default": {
         "bg_window": "#1e1e1e", "bg_surface": "#161b22", "bg_control": "#263238",

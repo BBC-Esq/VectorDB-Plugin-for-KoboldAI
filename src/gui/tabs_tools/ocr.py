@@ -1,67 +1,12 @@
 import html
 import time
 from pathlib import Path
-import fitz
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel,
     QComboBox, QFileDialog, QMessageBox
 )
 from PySide6.QtCore import QThread, Signal
-from modules.ocr import process_documents
-
-def get_pdf_page_count(pdf_path):
-    try:
-        with fitz.open(pdf_path) as doc:
-            return doc.page_count
-    except Exception as e:
-        print(f"Error reading PDF: {e}")
-        return 0
-
-def run_ocr_process(pdf_path, backend):
-    try:
-        events = process_documents(
-            pdf_paths=Path(pdf_path),
-            backend=backend,
-        )
-        return True, None, events if isinstance(events, dict) else {}
-    except Exception as e:
-        return False, str(e), {}
-
-def _page_list(pages, limit=10):
-    shown = ", ".join(str(p) for p in pages[:limit])
-    return shown + ", ..." if len(pages) > limit else shown
-
-def summarize_events(events):
-    events = events or {}
-    def entries(key):
-        return [e for e in events.get(key, []) if isinstance(e, dict)]
-    def pages(items):
-        return sorted({e.get('page') for e in items if e.get('page')})
-    warnings, infos = [], []
-    lc = pages(entries('lowconf'))
-    if lc:
-        warnings.append(f"{len(lc)} low-confidence page(s): {_page_list(lc)} (worth a manual review)")
-    nt = entries('notext')
-    nt_sus = pages([e for e in nt if e.get('ink_frac', 0) >= 0.002])
-    nt_blank = pages([e for e in nt if e.get('ink_frac', 0) < 0.002])
-    if nt_sus:
-        warnings.append(f"{len(nt_sus)} page(s) with visible content but no OCR text: {_page_list(nt_sus)}")
-    if nt_blank:
-        infos.append(f"{len(nt_blank)} blank page(s): {_page_list(nt_blank)}")
-    pe = pages(entries('pageerror'))
-    if pe:
-        warnings.append(f"{len(pe)} page(s) failed OCR (image kept, no text layer): {_page_list(pe)}")
-    mm = pages(entries('datamismatch'))
-    if mm:
-        warnings.append(f"{len(mm)} page(s) with inconsistent OCR data (partial text kept): {_page_list(mm)}")
-    for e in entries('verifyfail'):
-        warnings.append(f"verification: {e.get('msg', 'output verification warning')}")
-    for e in entries('fileerror'):
-        warnings.append(f"file failed: {e.get('error', 'unknown error')}")
-    orp = pages(entries('oriented'))
-    if orp:
-        infos.append(f"{len(orp)} page(s) auto-rotated to read: {_page_list(orp)}")
-    return warnings, infos
+from core.ocr_tools import OCR_ENGINES, ocr_output_path, run_ocr, summarize_ocr_events
 
 class OcrWorkerThread(QThread):
     finished_signal = Signal(bool, str, float, object)
@@ -73,15 +18,12 @@ class OcrWorkerThread(QThread):
 
     def run(self):
         start_time = time.time()
-        success, message, events = run_ocr_process(self.pdf_path, self.backend)
+        success, message, events = run_ocr(self.pdf_path, self.backend)
         elapsed_time = time.time() - start_time
         self.finished_signal.emit(success, message or "", elapsed_time, events)
 
 class OCRToolSettingsTab(QWidget):
-    ENGINE_MAPPING = {
-        "RapidOCR": "rapidocr",
-        "Tesseract": "tesseract"
-    }
+    ENGINE_MAPPING = OCR_ENGINES
 
     def __init__(self):
         super().__init__()
@@ -157,7 +99,7 @@ class OCRToolSettingsTab(QWidget):
         QMessageBox.critical(self, "Error", f"OCR process failed:\n{message}")
 
     def show_success_message(self):
-        warnings, infos = summarize_events(getattr(self, 'last_events', {}))
+        warnings, infos = summarize_ocr_events(getattr(self, 'last_events', {}))
 
         minutes, seconds = divmod(self.elapsed_time, 60)
         time_str = f"{int(minutes)}m {seconds:.1f}s" if minutes > 0 else f"{seconds:.1f}s"
@@ -171,8 +113,7 @@ class OCRToolSettingsTab(QWidget):
         if not self.selected_pdf_file:
             return
 
-        original_file = Path(self.selected_pdf_file)
-        processed_file = original_file.with_stem(f"{original_file.stem}_OCR").with_suffix(".pdf")
+        processed_file = ocr_output_path(self.selected_pdf_file)
 
         if processed_file.exists():
             file_link = f'<a href="file:///{processed_file}" style="color: #4CAF50; text-decoration: none;">Open New File</a>'

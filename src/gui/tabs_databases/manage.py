@@ -1,4 +1,3 @@
-import shutil
 import sqlite3
 from pathlib import Path
 
@@ -10,8 +9,9 @@ from PySide6.QtWidgets import (
     QGroupBox, QLabel, QComboBox, QMessageBox, QHeaderView
 )
 
-from core.utilities import open_file, save_config_atomically
 from core.constants import PROJECT_ROOT
+from core.databases import database_files, delete_database
+from gui.helpers import open_file
 
 
 class SQLiteTableModel(QAbstractTableModel):
@@ -129,39 +129,34 @@ class ManageDatabasesTab(QWidget):
 
         if selected_database:
             self.documents_group_box.show()
-            db_path = PROJECT_ROOT / "Vector_DB" / selected_database / "metadata.db"
-            if db_path.exists():
-                try:
-                    conn = sqlite3.connect(str(db_path))
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT file_name, file_path FROM document_metadata")
-                    data = cursor.fetchall()
-                    conn.close()
+            try:
+                data = database_files(selected_database)
+            except sqlite3.Error as e:
+                QMessageBox.warning(self, "Database Error", f"An error occurred while accessing the database: {e}")
+                self.display_no_databases_message()
+                return
+            if data is not None:
+                self.model._data = data
+                self.model.layoutChanged.emit()
 
-                    self.model._data = [(row[0], row[1]) for row in data]
-                    self.model.layoutChanged.emit()
-
-                    if self.config_path.exists():
-                        with open(self.config_path, 'r', encoding='utf-8') as file:
-                            config = yaml.safe_load(file)
-                            db_config = config.get('created_databases', {}).get(selected_database, {})
-                            model_path = db_config.get('model', '')
-                            model_name = Path(model_path).name
-                            chunk_size = db_config.get('chunk_size', '')
-                            chunk_overlap = db_config.get('chunk_overlap', '')
-                            info_text = (
-                                f'<span style="color: #4CAF50;"><b>Name:</b></span> "{selected_database}" '
-                                f'<span style="color: #888;">|</span> '
-                                f'<span style="color: #2196F3;"><b>Model:</b></span> "{model_name}" '
-                                f'<span style="color: #888;">|</span> '
-                                f'<span style="color: #FF9800;"><b>Chunk size/overlap:</b></span> {chunk_size} / {chunk_overlap}'
-                            )
-                            self.database_info_label.setText(info_text)
-                    else:
-                        self.database_info_label.setText("Configuration missing.")
-                except sqlite3.Error as e:
-                    QMessageBox.warning(self, "Database Error", f"An error occurred while accessing the database: {e}")
-                    self.display_no_databases_message()
+                if self.config_path.exists():
+                    with open(self.config_path, 'r', encoding='utf-8') as file:
+                        config = yaml.safe_load(file)
+                        db_config = config.get('created_databases', {}).get(selected_database, {})
+                        model_path = db_config.get('model', '')
+                        model_name = Path(model_path).name
+                        chunk_size = db_config.get('chunk_size', '')
+                        chunk_overlap = db_config.get('chunk_overlap', '')
+                        info_text = (
+                            f'<span style="color: #4CAF50;"><b>Name:</b></span> "{selected_database}" '
+                            f'<span style="color: #888;">|</span> '
+                            f'<span style="color: #2196F3;"><b>Model:</b></span> "{model_name}" '
+                            f'<span style="color: #888;">|</span> '
+                            f'<span style="color: #FF9800;"><b>Chunk size/overlap:</b></span> {chunk_size} / {chunk_overlap}'
+                        )
+                        self.database_info_label.setText(info_text)
+                else:
+                    self.database_info_label.setText("Configuration missing.")
             else:
                 self.display_no_databases_message()
         else:
@@ -202,25 +197,7 @@ class ManageDatabasesTab(QWidget):
 
             if self.config_path.exists():
                 try:
-                    with open(self.config_path, 'r', encoding='utf-8') as file:
-                        config = yaml.safe_load(file)
-
-                    if 'created_databases' in config and selected_database in config['created_databases']:
-                        del config['created_databases'][selected_database]
-
-                    config.setdefault('database', {})['database_to_search'] = ''
-
-                    save_config_atomically(config, self.config_path)
-
-                    base_dir = PROJECT_ROOT
-                    deletion_failed = False
-                    for folder_name in ["Vector_DB"]:
-                        dir_path = base_dir / folder_name / selected_database
-                        if dir_path.exists():
-                            shutil.rmtree(dir_path, ignore_errors=True)
-                            if dir_path.exists():
-                                deletion_failed = True
-                                print(f"Failed to delete: {dir_path}")
+                    deletion_failed = not delete_database(selected_database)
 
                     if deletion_failed:
                         QMessageBox.warning(

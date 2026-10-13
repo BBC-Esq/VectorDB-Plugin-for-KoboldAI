@@ -1,20 +1,20 @@
-import os
-import sys
-import time
 import gc
-import json
-import shutil
-import subprocess
 from pathlib import Path
 import yaml
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QRegularExpression, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QAction, QRegularExpressionValidator, QIntValidator
 from PySide6.QtWidgets import QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox, QListView, QMenu, QGroupBox, QLabel, QLineEdit, QGridLayout, QSizePolicy, QComboBox, QProgressDialog, QCheckBox
 
-from db.database_interactions import create_vector_db_in_process
-from db.choose_documents import choose_documents_directory, ALLOWED_EXTENSIONS, SymlinkWorker
-from core.utilities import check_preconditions_for_db_creation, open_file, delete_file, my_cprint, save_config_atomically
+from gui.tabs_databases.choose_documents import choose_documents_directory, SymlinkWorker
+from core.utilities import my_cprint, save_config_atomically
+from core.databases import (
+    check_preconditions_for_db_creation, register_database, remove_partial_database,
+    start_build, terminate_process_tree,
+)
+from core.settings import set_embedding_model
+from core.staging import DOCS_DIR, collect_files, remove_staged_file, staged_files
 from gui.download_model import model_downloaded_signal
+from gui.helpers import open_file, show_pdfs_need_ocr_dialog
 from core.constants import TOOLTIPS, PROJECT_ROOT
 
 
@@ -40,25 +40,9 @@ class VectorDBWorker(QThread):
 
     def run(self):
         try:
-            cmd = [
-                sys.executable, "-c",
-                "from db.database_interactions import create_vector_db_in_process; "
-                f"create_vector_db_in_process({self.database_name!r})"
-            ]
-
-            env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-
             self.progress.emit("Initializing database creation...")
 
-            self._process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                cwd=str(PROJECT_ROOT),
-                env=env,
-            )
+            self._process = start_build(self.database_name)
 
             for line in self._process.stdout:
                 line = line.rstrip("\n")
@@ -89,31 +73,7 @@ class VectorDBWorker(QThread):
         self._cancelled = True
         proc = self._process
         if proc and proc.poll() is None:
-            self._terminate_process_tree(proc.pid)
-
-    @staticmethod
-    def _terminate_process_tree(pid):
-        import psutil
-        try:
-            parent = psutil.Process(pid)
-        except psutil.NoSuchProcess:
-            return
-        try:
-            procs = parent.children(recursive=True)
-        except psutil.NoSuchProcess:
-            procs = []
-        procs.append(parent)
-        for p in procs:
-            try:
-                p.terminate()
-            except psutil.NoSuchProcess:
-                pass
-        _, alive = psutil.wait_procs(procs, timeout=5)
-        for p in alive:
-            try:
-                p.kill()
-            except psutil.NoSuchProcess:
-                pass
+            terminate_process_tree(proc.pid)
 
 
 class StagedFilesListView(QListView):
@@ -126,33 +86,8 @@ class StagedFilesListView(QListView):
 
     @staticmethod
     def _collect(urls):
-        top_level = []
-        subdirectory = []
-        skipped = 0
-        for url in urls:
-            if not url.isLocalFile():
-                continue
-            path = Path(url.toLocalFile())
-            if path.is_dir():
-                try:
-                    for child in path.iterdir():
-                        if child.is_file():
-                            if child.suffix.lower() in ALLOWED_EXTENSIONS:
-                                top_level.append(str(child))
-                            else:
-                                skipped += 1
-                    for child in path.rglob("*"):
-                        if (child.is_file() and child.parent != path
-                                and child.suffix.lower() in ALLOWED_EXTENSIONS):
-                            subdirectory.append(str(child))
-                except OSError:
-                    pass
-            elif path.is_file():
-                if path.suffix.lower() in ALLOWED_EXTENSIONS:
-                    top_level.append(str(path))
-                else:
-                    skipped += 1
-        return top_level, subdirectory, skipped
+        selection = collect_files([url.toLocalFile() for url in urls if url.isLocalFile()])
+        return selection.top_level, selection.nested, len(selection.unsupported)
 
     def _has_usable_payload(self, event):
         mime = event.mimeData()
@@ -449,28 +384,7 @@ class DatabasesTab(QWidget):
             self.model_combobox.setCurrentIndex(0)
 
     def on_model_selected(self, index):
-        selected_path = self.model_combobox.itemData(index)
-        config_path = PROJECT_ROOT / "config.yaml"
-        config_data = {}
-        if config_path.exists():
-            with open(config_path, 'r', encoding='utf-8') as file:
-                config_data = yaml.safe_load(file) or {}
-        if selected_path:
-            config_data["EMBEDDING_MODEL_NAME"] = selected_path
-            if "stella" in selected_path.lower() or "static-retrieval" in selected_path.lower():
-                config_data["EMBEDDING_MODEL_DIMENSIONS"] = 1024
-            else:
-                config_json_path = Path(selected_path) / "config.json"
-                if config_json_path.exists():
-                    with open(config_json_path, 'r', encoding='utf-8') as json_file:
-                        model_config = json.load(json_file)
-                    embedding_dimensions = model_config.get("hidden_size") or model_config.get("d_model")
-                    if embedding_dimensions and isinstance(embedding_dimensions, int):
-                        config_data["EMBEDDING_MODEL_DIMENSIONS"] = embedding_dimensions
-        else:
-            config_data.pop("EMBEDDING_MODEL_NAME", None)
-            config_data.pop("EMBEDDING_MODEL_DIMENSIONS", None)
-        save_config_atomically(config_data, config_path, allow_unicode=True)
+        set_embedding_model(self.model_combobox.itemData(index))
 
     def create_group_box(self, title, directory_name):
         group_box = QGroupBox(title)
@@ -484,14 +398,7 @@ class DatabasesTab(QWidget):
 
     @staticmethod
     def _scan_docs(docs_dir):
-        try:
-            with os.scandir(docs_dir) as it:
-                return sorted(
-                    entry.name for entry in it
-                    if not entry.is_dir(follow_symlinks=False)
-                )
-        except OSError:
-            return []
+        return staged_files(docs_dir)
 
     def _refresh_info_label(self):
         script_dir = PROJECT_ROOT
@@ -611,7 +518,7 @@ class DatabasesTab(QWidget):
             )
             return
 
-        target_dir = PROJECT_ROOT / "Docs_for_DB"
+        target_dir = DOCS_DIR
         target_dir.mkdir(parents=True, exist_ok=True)
 
         progress = QProgressDialog("Adding files...", "Cancel", 0, 0, self)
@@ -646,7 +553,7 @@ class DatabasesTab(QWidget):
     def on_double_click(self, index):
         name = index.data(Qt.DisplayRole)
         if name:
-            open_file(str(PROJECT_ROOT / "Docs_for_DB" / name))
+            open_file(str(DOCS_DIR / name))
 
     def on_context_menu(self, point):
         list_view = self.sender()
@@ -658,10 +565,10 @@ class DatabasesTab(QWidget):
 
     def on_delete_file(self, list_view):
         names = [idx.data(Qt.DisplayRole) for idx in list_view.selectedIndexes()]
-        for name in names:
-            if name:
-                delete_file(str(PROJECT_ROOT / "Docs_for_DB" / name))
+        failed = [name for name in names if name and not remove_staged_file(name)]
         self.refresh_staged_files()
+        if failed:
+            QMessageBox.warning(self, "Delete File", "Unable to delete file(s), please delete manually.")
 
     def on_create_db_clicked(self):
         if self.model_combobox.currentIndex() == 0:
@@ -710,8 +617,10 @@ class DatabasesTab(QWidget):
     def start_database_creation(self, database_name, model_name, skip_ocr):
         try:
             script_dir = PROJECT_ROOT
-            ok, msg = check_preconditions_for_db_creation(script_dir, database_name, skip_ocr=skip_ocr)
+            ok, msg, non_ocr_pdfs = check_preconditions_for_db_creation(script_dir, database_name, skip_ocr=skip_ocr)
             if not ok:
+                if non_ocr_pdfs:
+                    show_pdfs_need_ocr_dialog(non_ocr_pdfs)
                 self._validation_failed(msg)
                 return
 
@@ -736,9 +645,7 @@ class DatabasesTab(QWidget):
         try:
             if was_cancelled:
                 if self.current_database_name:
-                    partial_dir = PROJECT_ROOT / "Vector_DB" / self.current_database_name
-                    if partial_dir.exists():
-                        shutil.rmtree(partial_dir, ignore_errors=True)
+                    remove_partial_database(self.current_database_name)
                 QMessageBox.information(
                     self,
                     "Cancelled",
@@ -746,7 +653,7 @@ class DatabasesTab(QWidget):
                 )
             elif success:
                 my_cprint(f"{self.current_model_name} removed from memory.", "red")
-                self.update_config_with_database_name()
+                register_database(self.current_database_name)
                 QMessageBox.information(self, "Success", message)
             else:
                 QMessageBox.critical(self, "Error", message)
@@ -757,23 +664,6 @@ class DatabasesTab(QWidget):
                 self.db_worker.deleteLater()
                 self.db_worker = None
             self.reenable_create_db_button()
-
-    def update_config_with_database_name(self):
-        config_path = PROJECT_ROOT / "config.yaml"
-        if config_path.exists():
-            with open(config_path, 'r', encoding='utf-8') as file:
-                config = yaml.safe_load(file) or {}
-            model = config.get('EMBEDDING_MODEL_NAME')
-            chunk_size = config.get('database', {}).get('chunk_size')
-            chunk_overlap = config.get('database', {}).get('chunk_overlap')
-            if 'created_databases' not in config or not isinstance(config['created_databases'], dict):
-                config['created_databases'] = {}
-            config['created_databases'][self.current_database_name] = {
-                'model': model,
-                'chunk_size': chunk_size,
-                'chunk_overlap': chunk_overlap
-            }
-            save_config_atomically(config, config_path, allow_unicode=True)
 
     def reenable_create_db_button(self):
         self.create_db_button.setDisabled(False)
@@ -794,9 +684,7 @@ class DatabasesTab(QWidget):
             self.db_worker.cancel()
             self.db_worker.wait(5000)
             if self.current_database_name:
-                partial_dir = PROJECT_ROOT / "Vector_DB" / self.current_database_name
-                if partial_dir.exists():
-                    shutil.rmtree(partial_dir, ignore_errors=True)
+                remove_partial_database(self.current_database_name)
 
     def toggle_group_box(self, group_box, checked):
         self.groups[group_box] = 1 if checked else 0
