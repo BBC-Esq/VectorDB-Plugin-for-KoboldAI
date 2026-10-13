@@ -48,7 +48,6 @@ def compare_models_on_image(image_path, model_names, on_started=None, on_complet
                     start_time = time.time()
                     description = loader.process_single_image(raw_image)
                     process_time = time.time() - start_time
-                    description = textwrap.fill(description, width=10)
                     results.append((model_name, description, process_time))
 
                     _release(loader)
