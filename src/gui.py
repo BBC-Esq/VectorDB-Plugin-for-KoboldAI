@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from core.initialize import main as initialize_system
 from gui.tabs import create_tabs
 from core.utilities import list_theme_files, make_theme_changer, load_stylesheet, ensure_theme_config
+from gui.credentials import manage_credentials
 
 try:
     with open('test_write.txt', 'w') as f:
@@ -69,9 +70,13 @@ class DocQA_GUI(QWidget):
     def init_menu(self):
         try:
             self.menu_bar = QMenuBar(self)
-            self.theme_menu = self.menu_bar.addMenu('Themes')
+            self.layout().setMenuBar(self.menu_bar)
+            self.file_menu = self.menu_bar.addMenu('File')
+            self.theme_menu = self.file_menu.addMenu('Themes')
             for theme in list_theme_files():
                 self.theme_menu.addAction(theme).triggered.connect(make_theme_changer(theme))
+            self.hf_token_menu = self.file_menu.addAction('Hugging Face Access Token')
+            self.hf_token_menu.triggered.connect(lambda: manage_credentials(self, 'hf'))
             logging.info("Menu initialized successfully")
         except Exception as e:
             logging.error(f"Error initializing menu: {str(e)}")
