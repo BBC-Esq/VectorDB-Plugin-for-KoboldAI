@@ -23,6 +23,32 @@ def run_ocr(pdf_path, backend):
         return False, str(e), {}
 
 
+def ocr_staged_pdfs(on_start=None, on_result=None, should_stop=None):
+    from core.databases import find_pdfs_needing_ocr
+    from core.staging import DOCS_DIR, remove_staged_file, stage_files
+
+    pdfs = find_pdfs_needing_ocr(DOCS_DIR)
+    converted = 0
+    for index, link in enumerate(pdfs, 1):
+        if should_stop is not None and should_stop():
+            break
+        source = link.resolve()
+        if on_start is not None:
+            on_start(index, len(pdfs), source)
+        ok, error, events = run_ocr(source, OCR_ENGINES["RapidOCR"])
+        output = ocr_output_path(source)
+        if ok and output.exists():
+            remove_staged_file(link.name)
+            stage_files([str(output)])
+            converted += 1
+        else:
+            output = None
+            error = error or "no output was written"
+        if on_result is not None:
+            on_result(index, len(pdfs), source, output, error, events)
+    return len(pdfs), converted
+
+
 def _page_list(pages, limit=10):
     shown = ", ".join(str(p) for p in pages[:limit])
     return shown + ", ..." if len(pages) > limit else shown

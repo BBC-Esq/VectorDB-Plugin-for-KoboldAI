@@ -1,7 +1,10 @@
 import io
 import json
 import os
+import re
 import sys
+import threading
+import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -13,47 +16,131 @@ sys.stdout = sys.stderr
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "vectordb-plugin"
-SERVER_VERSION = "1.0.0"
+SERVER_VERSION = "1.1.0"
 
-CONTEXTS = 5
-SIMILARITY = 0.5
+SEARCH_TIMEOUT = 150
+IDLE_RELEASE_SECONDS = 600
 
-TOOLS = [
-    {
-        "name": "vectordb_list_databases",
-        "description": (
-            "List the vector databases available on this machine. Returns each "
-            "database's name, the embedding model it was built with, and its chunk "
-            "size. Call this before vectordb_search so you know which database "
-            "names are valid."
-        ),
-        "inputSchema": {"type": "object", "properties": {}, "required": []},
-    },
-    {
-        "name": "vectordb_search",
-        "description": (
-            "Search a vector database for passages relevant to a question and return "
-            "the best matching excerpts from the user's own documents. Use this "
-            "whenever the user asks about the contents of their documents, files, or "
-            "a topic they have stored locally. Returns up to "
-            f"{CONTEXTS} excerpts with the source file name and a similarity score."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "database_name": {
-                    "type": "string",
-                    "description": "Name of the database to search, as reported by vectordb_list_databases.",
-                },
-                "query": {
-                    "type": "string",
-                    "description": "What to look for, written as a natural-language question or topic.",
-                },
-            },
-            "required": ["database_name", "query"],
+_request_lock = threading.Lock()
+_search_service = None
+_last_search = 0.0
+
+
+def build_tools():
+    from core.downloads import language_guidance, vector_models
+
+    guidance = " ".join(language_guidance())
+    return [
+        {
+            "name": "vectordb_list_databases",
+            "description": (
+                "List the vector databases on this computer: each database's name, the embedding model it was "
+                "built with and whether that model suits English or multilingual text, and how many files it "
+                "holds. It also shows a database that is still being created. Call this before vectordb_search "
+                "so you use a valid database name. Takes no parameters."
+            ),
+            "inputSchema": {"type": "object", "properties": {}, "required": []},
         },
-    },
-]
+        {
+            "name": "vectordb_search",
+            "description": (
+                "Search one of the user's vector databases and return the passages from their own files that "
+                "best match a question, each labeled with its source file name. Use it whenever the user asks "
+                "about the contents of their documents. Parameters: database_name (required) is a name from "
+                "vectordb_list_databases; query (required) is the question or topic in plain words. Base your "
+                "answer on the returned passages and name the files you used."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "database_name": {
+                        "type": "string",
+                        "description": "Name of the database to search, as listed by vectordb_list_databases.",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "The question or topic to look for, in plain words.",
+                    },
+                },
+                "required": ["database_name", "query"],
+            },
+        },
+        {
+            "name": "vectordb_create_database",
+            "description": (
+                "Create a new vector database from files and folders on this computer so they can be searched "
+                "with vectordb_search. Only do this when the user asks. It runs in the background and returns "
+                "right away; large folders can take a long time, so check vectordb_build_status and tell the "
+                "user how it is going. Parameters: database_name (required) is a new name of at least 3 "
+                "characters using only lowercase letters, numbers, hyphens and underscores. paths (required) is "
+                "a list of full paths to files or folders, for example [\"C:\\\\Users\\\\Name\\\\Documents\\\\Cases\"]; "
+                "folders include all their subfolders. embedding_model (optional) should match the language of "
+                f"the documents. {guidance} If it is left out, the model used last time is used. "
+                "ocr_scanned_pdfs (optional, true or false) first makes scanned PDFs that have no text "
+                "searchable, saving a searchable copy named NAME_OCR.pdf next to each one; ask the user before "
+                "using it. clear_waiting_files (optional, true or false) removes files left waiting from an "
+                "earlier session; only use it after the user agrees."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "database_name": {
+                        "type": "string",
+                        "description": "New database name: at least 3 lowercase letters, numbers, hyphens or underscores.",
+                    },
+                    "paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Full paths to the files or folders to add. Folders include their subfolders.",
+                    },
+                    "embedding_model": {
+                        "type": "string",
+                        "enum": [m["name"] for m in vector_models()],
+                        "description": f"Embedding model that suits the documents' language. {guidance}",
+                    },
+                    "ocr_scanned_pdfs": {
+                        "type": "boolean",
+                        "description": "Make scanned PDFs searchable first by saving NAME_OCR.pdf copies next to them.",
+                    },
+                    "clear_waiting_files": {
+                        "type": "boolean",
+                        "description": "Remove files left waiting from an earlier session before adding these.",
+                    },
+                },
+                "required": ["database_name", "paths"],
+            },
+        },
+        {
+            "name": "vectordb_build_status",
+            "description": (
+                "Report the progress of a database that is being created, or the result of the last one: the "
+                "current step, how far along it is, and any files that could not be added. Parameter: "
+                "database_name (optional); leave it out to get the database being created now or the most "
+                "recent one."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "database_name": {"type": "string", "description": "Name of the database to report on."},
+                },
+                "required": [],
+            },
+        },
+        {
+            "name": "vectordb_cancel_build",
+            "description": (
+                "Stop creating a database that is still being built and remove its partial files. Only use "
+                "this when the user asks to stop. Parameter: database_name (required)."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "database_name": {"type": "string", "description": "Name of the database to stop creating."},
+                },
+                "required": ["database_name"],
+            },
+        },
+    ]
 
 
 def _text_result(text):
@@ -64,71 +151,151 @@ def _error_result(text):
     return {"content": [{"type": "text", "text": text}], "isError": True}
 
 
-def tool_list_databases():
-    from core.config import reload_config
+def _flag(value):
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "yes", "1", "on")
+    return bool(value)
 
-    config = reload_config()
-    names = config.get_user_databases()
-    if not names:
-        return _text_result(
-            "No vector databases have been created yet. The user needs to create one "
-            "in the VectorDB Plugin application before it can be searched."
-        )
+
+def search_service():
+    global _search_service
+    if _search_service is None:
+        from db.search_process import SearchService
+
+        _search_service = SearchService(timeout=SEARCH_TIMEOUT)
+    return _search_service
+
+
+def release_search():
+    if _search_service is not None:
+        _search_service.release()
+
+
+def _idle_release_loop():
+    while True:
+        time.sleep(30)
+        if _search_service is None or _search_service.database is None:
+            continue
+        if time.monotonic() - _last_search < IDLE_RELEASE_SECONDS:
+            continue
+        if not _request_lock.acquire(blocking=False):
+            continue
+        try:
+            release_search()
+            print(f"[{SERVER_NAME}] released the idle search process", file=sys.stderr)
+        except Exception as e:
+            print(f"[{SERVER_NAME}] could not release the search process: {e}", file=sys.stderr)
+        finally:
+            _request_lock.release()
+
+
+def tool_list_databases():
+    from core.build_jobs import describe_status, running_job
+    from core.databases import database_files, list_databases
+    from core.downloads import model_language, vector_model_for_path
 
     lines = []
-    for name in names:
-        info = config.created_databases[name]
-        lines.append(f"- {name} (embedding model: {info.model}, chunk size: {info.chunk_size})")
-    return _text_result("Available vector databases:\n" + "\n".join(lines))
+    for name, info in sorted(list_databases().items()):
+        model = vector_model_for_path(info.get("model"))
+        if model:
+            model_text = f"{model['name']} ({model_language(model)})"
+        else:
+            model_text = Path(info["model"]).name if info.get("model") else "unknown model"
+        files = database_files(name)
+        count = f"{len({f for f, _ in files})} file(s)" if files is not None else "its files are missing"
+        lines.append(f"- {name}: {model_text}, {count}")
+    running = running_job()
+    text = ("Databases:\n" + "\n".join(lines)) if lines else "There are no vector databases yet."
+    if running is not None:
+        text += "\n\nStill being created: " + describe_status(running)
+    return _text_result(text)
 
 
 def tool_search(arguments):
+    global _last_search
     database_name = (arguments.get("database_name") or "").strip()
     query = (arguments.get("query") or "").strip()
-
     if not database_name:
         return _error_result("database_name is required.")
     if not query:
         return _error_result("query is required.")
 
-    from core.config import reload_config
+    from core.build_jobs import job_is_running, read_status
+    from core.databases import list_databases
+    from core.settings import current_settings
 
-    config = reload_config()
-    available = config.get_user_databases()
+    available = sorted(list_databases())
     if database_name not in available:
+        status = read_status(database_name)
+        if status is not None and job_is_running(status):
+            return _error_result(f"'{database_name}' is still being created. Check vectordb_build_status.")
         listed = ", ".join(available) if available else "none"
-        return _error_result(
-            f"No database named '{database_name}'. Available databases: {listed}."
-        )
+        return _error_result(f"No database named '{database_name}'. Available databases: {listed}.")
 
-    from db.database_interactions import get_query_db
-
-    db = get_query_db(database_name)
-    contexts, metadata_list = db.search(
-        query,
-        k=CONTEXTS,
-        score_threshold=SIMILARITY,
-        search_term="",
-        document_types="",
-    )
-
+    settings = current_settings()
+    options = {"k": settings["contexts"], "score_threshold": settings["similarity"], "search_term": "", "document_types": ""}
+    _last_search = time.monotonic()
+    contexts, metadata_list = search_service().search(database_name, query, options)
+    _last_search = time.monotonic()
     if not contexts:
-        return _text_result(
-            f"No passages in '{database_name}' matched that query closely enough."
-        )
-
+        return _text_result(f"No passages in '{database_name}' matched that query closely enough. "
+                            "Try rephrasing it or searching for more specific words.")
     blocks = []
-    for i, (text, meta) in enumerate(zip(contexts, metadata_list), 1):
+    for index, (text, meta) in enumerate(zip(contexts, metadata_list), 1):
         source = meta.get("file_name") or meta.get("file_path") or "unknown source"
-        score = meta.get("similarity_score")
-        header = f"[{i}] {source}"
-        if isinstance(score, (int, float)):
-            header += f" (similarity {score:.3f})"
-        blocks.append(f"{header}\n{text}")
+        cleaned = re.sub(r"\n\s*\n\s*\n*", "\n\n", re.sub(r"\n[ \t]+\n", "\n\n", text).strip())
+        blocks.append(f"[{index}] {source}\n{cleaned}")
+    return _text_result(f"{len(blocks)} passage(s) from '{database_name}':\n\n" + "\n\n".join(blocks))
 
-    return _text_result(
-        f"{len(blocks)} passage(s) from '{database_name}':\n\n" + "\n\n".join(blocks)
+
+def tool_create_database(arguments):
+    from core.build_jobs import start_build_job
+
+    paths = arguments.get("paths")
+    if paths is None and arguments.get("path"):
+        paths = [arguments["path"]]
+    release_search()
+    plan = start_build_job(
+        arguments.get("database_name") or "",
+        paths,
+        embedding_model=(arguments.get("embedding_model") or "").strip() or None,
+        ocr_scanned_pdfs=_flag(arguments.get("ocr_scanned_pdfs")),
+        clear_waiting_files=_flag(arguments.get("clear_waiting_files")),
     )
+    model = plan["model"]
+    text = f"Started creating '{plan['name']}' from {plan['files']} file(s) with {model['name']}"
+    if plan["download"]:
+        text += f", which will be downloaded first (about {model['size_mb']} MB)"
+    text += ". It runs in the background; check its progress with vectordb_build_status."
+    if plan["unsupported"]:
+        text += f" {plan['unsupported']} file(s) of types this program can't read will be skipped."
+    return _text_result(text)
+
+
+def tool_build_status(arguments):
+    from core.build_jobs import status_report
+
+    return _text_result(status_report((arguments.get("database_name") or "").strip() or None))
+
+
+def tool_cancel_build(arguments):
+    from core.build_jobs import request_cancel
+
+    database_name = (arguments.get("database_name") or "").strip()
+    if not database_name:
+        return _error_result("database_name is required.")
+    return _text_result(request_cancel(database_name))
+
+
+TOOL_HANDLERS = {
+    "vectordb_list_databases": lambda arguments: tool_list_databases(),
+    "vectordb_search": tool_search,
+    "vectordb_create_database": tool_create_database,
+    "vectordb_build_status": tool_build_status,
+    "vectordb_cancel_build": tool_cancel_build,
+}
+
+TOOLS = []
 
 
 def dispatch(request):
@@ -153,17 +320,17 @@ def dispatch(request):
         params = request.get("params") or {}
         name = params.get("name", "")
         arguments = params.get("arguments") or {}
+        handler = TOOL_HANDLERS.get(name)
+        if handler is None:
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32601, "message": f"Unknown tool: {name}"},
+            }
         try:
-            if name == "vectordb_list_databases":
-                result = tool_list_databases()
-            elif name == "vectordb_search":
-                result = tool_search(arguments)
-            else:
-                return {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {"code": -32601, "message": f"Unknown tool: {name}"},
-                }
+            result = handler(arguments)
+        except (ValueError, RuntimeError, FileNotFoundError) as e:
+            result = _error_result(str(e))
         except Exception as e:
             import traceback
 
@@ -190,6 +357,12 @@ def send(message):
 
 
 def main():
+    global TOOLS
+    from core.environment import prepare_process
+
+    prepare_process()
+    TOOLS = build_tools()
+    threading.Thread(target=_idle_release_loop, daemon=True).start()
     stdin = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8", errors="replace")
     print(f"[{SERVER_NAME}] ready, project root {PROJECT_ROOT}", file=sys.stderr)
 
@@ -207,9 +380,11 @@ def main():
             })
             continue
 
-        response = dispatch(request)
+        with _request_lock:
+            response = dispatch(request)
         if response is not None:
             send(response)
+    release_search()
 
 
 if __name__ == "__main__":

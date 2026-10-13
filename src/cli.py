@@ -123,22 +123,6 @@ def configure_output():
             pass
 
 
-def prepare_environment():
-    import faulthandler
-    import logging
-    import multiprocessing
-
-    faulthandler.enable(all_threads=True)
-    multiprocessing.set_start_method("spawn", force=True)
-    logging.basicConfig(level=logging.ERROR, format="%(message)s")
-    from core.gpu_guard import hide_unsupported_gpus
-    hide_unsupported_gpus()
-    from core.native_preload import preload_native_libraries
-    preload_native_libraries()
-    from core.cuda_paths import set_cuda_paths
-    set_cuda_paths()
-
-
 def download_model(model):
     from core.downloads import ModelDownloader
 
@@ -460,22 +444,30 @@ def cmd_delete(args):
     return 0
 
 
+def report_ocr(path, output, error, events, seconds):
+    from core.ocr_tools import summarize_ocr_events
+
+    if output is None:
+        warn(f"  OCR failed for {path.name}: {error}")
+        return
+    warnings, infos = summarize_ocr_events(events)
+    out(f"  Saved {output} ({format_seconds(seconds)})")
+    for item in warnings:
+        out(f"  Warning: {item}")
+    for item in infos:
+        out(f"  {item}")
+
+
 def ocr_pdf(path):
-    from core.ocr_tools import OCR_ENGINES, ocr_output_path, run_ocr, summarize_ocr_events
+    from core.ocr_tools import OCR_ENGINES, ocr_output_path, run_ocr
 
     out(f"Reading text from {path.name}...")
     started = time.monotonic()
     ok, error, events = run_ocr(path, OCR_ENGINES["RapidOCR"])
     output = ocr_output_path(path)
     if not ok or not output.exists():
-        warn(f"  OCR failed for {path.name}: {error or 'no output was written'}")
-        return None
-    warnings, infos = summarize_ocr_events(events)
-    out(f"  Saved {output} ({format_seconds(time.monotonic() - started)})")
-    for item in warnings:
-        out(f"  Warning: {item}")
-    for item in infos:
-        out(f"  {item}")
+        output, error = None, error or "no output was written"
+    report_ocr(path, output, error, events, time.monotonic() - started)
     return output
 
 
@@ -486,23 +478,24 @@ def cmd_ocr(args):
         return fail("Name PDF files or folders, or use --staged, but not both.")
     if args.staged:
         from core.locks import exclusive
-        from core.staging import DOCS_DIR, remove_staged_file, stage_files
+        from core.ocr_tools import ocr_staged_pdfs
 
-        failures = 0
+        timer = {}
+
+        def on_start(index, total, source):
+            out(f"Reading text from {source.name} ({index} of {total})...")
+            timer["started"] = time.monotonic()
+
+        def on_result(index, total, source, output, error, events):
+            report_ocr(source, output, error, events, time.monotonic() - timer["started"])
+            if output is not None:
+                out(f"  The list now has {output.name} instead of {source.name}.")
+
         with exclusive("making the staged PDFs searchable"):
-            pdfs = find_pdfs_needing_ocr(DOCS_DIR)
-            if not pdfs:
-                out("None of the staged PDFs need OCR.")
-                return 0
-            for link in pdfs:
-                output = ocr_pdf(link.resolve())
-                if output is None:
-                    failures += 1
-                    continue
-                remove_staged_file(link.name)
-                stage_files([str(output)])
-                out(f"  The list now has {output.name} instead of {link.name}.")
-        return 1 if failures else 0
+            total, converted = ocr_staged_pdfs(on_start=on_start, on_result=on_result)
+        if not total:
+            out("None of the staged PDFs need OCR.")
+        return 1 if converted < total else 0
     targets, problems = [], []
     for raw in args.paths:
         path = user_path(raw)
@@ -519,6 +512,25 @@ def cmd_ocr(args):
         warn(f"Not a PDF file or folder: {raw}")
     failures = sum(ocr_pdf(path) is None for path in targets)
     return 1 if failures or problems else 0
+
+
+def cmd_status(args):
+    from core.build_jobs import status_report
+
+    out(status_report(args.database))
+    return 0
+
+
+def cmd_cancel(args):
+    from core.build_jobs import read_status, request_cancel
+    from core.locks import current_operation
+
+    status = read_status(args.database)
+    holder = current_operation()
+    if status is None and holder and f"'{args.database}'" in holder.get("operation", ""):
+        return fail(f"'{args.database}' is being created from the command line. Press Ctrl+C in that window to stop it.")
+    out(request_cancel(args.database))
+    return 0
 
 
 def match_name(text, names, kind):
@@ -784,6 +796,14 @@ def build_parser():
     sub.add_argument("database", help="database name")
     sub.add_argument("--yes", action="store_true", help="don't ask for confirmation")
 
+    sub = command("status", cmd_status, "Show the progress or result of creating a database from KoboldCpp",
+                  "Show the progress of a database being created, including ones started from KoboldCpp, or the "
+                  "result of the most recent one.")
+    sub.add_argument("database", nargs="?", help="database name (default: the current or most recent one)")
+
+    sub = command("cancel", cmd_cancel, "Stop creating a database that was started from KoboldCpp")
+    sub.add_argument("database", help="database name")
+
     sub = command("ocr", cmd_ocr, "Make scanned PDFs searchable with RapidOCR",
                   "Make scanned PDFs searchable with RapidOCR. Each PDF gets a searchable copy next to it named "
                   "NAME_OCR.pdf. Folders are searched for PDFs that have no text layer.")
@@ -828,7 +848,9 @@ def main(argv=None):
     if not getattr(args, "handler", None):
         parser.print_help()
         return 0
-    prepare_environment()
+    from core.environment import prepare_process
+
+    prepare_process()
     from core.downloads import DownloadError
     from core.locks import BusyError
 
