@@ -4,9 +4,9 @@ from pathlib import Path
 
 import yaml
 from PySide6.QtCore import Qt, QAbstractTableModel
-from PySide6.QtGui import QAction, QColor
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QTableView, QMenu,
+    QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QTableView,
     QGroupBox, QLabel, QComboBox, QMessageBox, QHeaderView
 )
 
@@ -113,8 +113,6 @@ class ManageDatabasesTab(QWidget):
         self.table_view.setSelectionMode(QTableView.SingleSelection)
         self.table_view.setSelectionBehavior(QTableView.SelectRows)
         self.table_view.doubleClicked.connect(self.on_double_click)
-        self.table_view.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table_view.customContextMenuRequested.connect(self.show_context_menu)
 
         self.table_view.horizontalHeader().setStretchLastSection(True)
         self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -254,14 +252,3 @@ class ManageDatabasesTab(QWidget):
         else:
             self.display_no_databases_message()
         self.pull_down_menu.blockSignals(False)
-
-    def show_context_menu(self, position):
-        context_menu = QMenu(self)
-        delete_action = QAction("Delete File", self)
-        delete_action.triggered.connect(self.delete_selected_file)
-        context_menu.addAction(delete_action)
-
-        context_menu.exec_(self.table_view.viewport().mapToGlobal(position))
-
-    def delete_selected_file(self):
-        print("Delete file functionality will be implemented here.")
