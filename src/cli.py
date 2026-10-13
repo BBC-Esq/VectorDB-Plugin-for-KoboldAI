@@ -790,6 +790,19 @@ def cmd_wiki(args):
     return 0
 
 
+def cmd_mcp_config(args):
+    from core.initialize import prepare
+
+    prepare()
+    path = user_path(args.path) if args.path else PROJECT_ROOT.parent / "mcp.json"
+    server = PROJECT_ROOT / "modules" / "mcp_server.py"
+    config = {"mcpServers": {"vectordb": {"command": Path(sys.executable).as_posix(), "args": [server.as_posix()]}}}
+    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    out(f"Saved {path}")
+    out("Load it in KoboldCpp's launcher: open the Loaded Files tab and choose this file as the MCP JSON file.")
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="python cli.py",
@@ -907,6 +920,11 @@ def build_parser():
     sub.add_argument("action", nargs="?", choices=["update"], help="omit to only check")
     sub.add_argument("--force", action="store_true", help="rebuild even if the wiki hasn't changed")
     sub.add_argument("--verbose", action="store_true", help="show the full build log")
+
+    sub = command("mcp-config", cmd_mcp_config, "Save the mcp.json file that KoboldCpp loads to use this program",
+                  "Save the mcp.json file that tells KoboldCpp how to start this program's MCP server, by default "
+                  "in the folder that contains src.")
+    sub.add_argument("path", nargs="?", help="where to save it (default: mcp.json next to the src folder)")
 
     return parser
 

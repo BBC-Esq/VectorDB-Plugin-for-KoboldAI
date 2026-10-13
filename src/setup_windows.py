@@ -27,7 +27,7 @@ import time
 import tkinter as tk
 from tkinter import messagebox
 
-from core.constants import priority_libs, libs, full_install_libs, MIN_CUDA_COMPUTE_CAPABILITY, MIN_NVIDIA_DRIVER_VERSION
+from core.constants import priority_libs, libs, full_install_libs, MIN_CUDA_COMPUTE_CAPABILITY, MIN_NVIDIA_DRIVER_VERSION, WIKI_MODEL
 from core.gpu_guard import query_nvidia_gpus, query_nvidia_driver_version, is_supported_gpu, describe_gpus
 
 start_time = time.time()
@@ -275,6 +275,15 @@ if all_failed:
 if hardware_type == "GPU":
     from core.utilities import clean_triton_cache
     clean_triton_cache()
+
+cli_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cli.py")
+
+print(f"\nDownloading {WIKI_MODEL}, the embedding model that searches the KoboldCpp wiki database:")
+if subprocess.run([sys.executable, cli_path, "download", WIKI_MODEL], check=False).returncode != 0:
+    print(f"\033[93mThe download didn't finish. Run this later to finish it: python cli.py download {WIKI_MODEL}\033[0m")
+
+print("\nSaving mcp.json, the file KoboldCpp loads to use this program:")
+subprocess.run([sys.executable, cli_path, "mcp-config"], check=False)
 
 end_time = time.time()
 total_time = end_time - start_time
