@@ -20,10 +20,12 @@ SERVER_VERSION = "1.1.0"
 
 SEARCH_TIMEOUT = 150
 IDLE_RELEASE_SECONDS = 600
+REPEAT_WINDOW_SECONDS = 180
 
 _request_lock = threading.Lock()
 _search_service = None
 _last_search = 0.0
+_recent_searches = {}
 
 
 def build_tools():
@@ -48,7 +50,9 @@ def build_tools():
                 "best match a question, each labeled with its source file name. Use it whenever the user asks "
                 "about the contents of their documents. Parameters: database_name (required) is a name from "
                 "vectordb_list_databases; query (required) is the question or topic in plain words. Base your "
-                "answer on the returned passages and name the files you used."
+                "answer on the returned passages and name the files you used. If they don't answer the question, "
+                "search once more with different words, or tell the user the documents don't seem to cover it. "
+                "Repeating the exact same search returns no new passages."
             ),
             "inputSchema": {
                 "type": "object",
@@ -234,9 +238,21 @@ def tool_search(arguments):
 
     settings = current_settings()
     options = {"k": settings["contexts"], "score_threshold": settings["similarity"], "search_term": "", "document_types": ""}
+    key = (database_name, query, settings["contexts"], settings["similarity"])
+    now = time.monotonic()
+    for old_key, stamp in list(_recent_searches.items()):
+        if now - stamp > REPEAT_WINDOW_SECONDS:
+            del _recent_searches[old_key]
+    if key in _recent_searches:
+        return _text_result(
+            f"You already searched '{database_name}' for exactly \"{query}\" moments ago, so this would return the "
+            "same passages again. Answer from the passages you already have, or search with different words. If "
+            "those passages are no longer in the conversation, search again with slightly different wording."
+        )
     _last_search = time.monotonic()
     contexts, metadata_list = search_service().search(database_name, query, options)
     _last_search = time.monotonic()
+    _recent_searches[key] = _last_search
     if not contexts:
         return _text_result(f"No passages in '{database_name}' matched that query closely enough. "
                             "Try rephrasing it or searching for more specific words.")
