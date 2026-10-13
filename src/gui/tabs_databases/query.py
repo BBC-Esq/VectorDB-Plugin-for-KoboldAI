@@ -301,7 +301,8 @@ class DatabaseQueryTab(QWidget):
                 logging.debug("Error disconnecting thread signals: " + str(e))
 
     def update_response(self, response_chunk):
-        response_chunk = response_chunk.lstrip("\n")
+        if self.read_only_text.document().isEmpty():
+            response_chunk = response_chunk.lstrip("\n")
         if response_chunk:
             self.read_only_text.insertPlainText(response_chunk)
             self.read_only_text.ensureCursorVisible()

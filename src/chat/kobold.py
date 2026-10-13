@@ -184,8 +184,6 @@ class KoboldChat:
                 normalized_response = normalize_chat_text(full_response)
                 f.write(normalized_response)
 
-            self.signals.response_signal.emit("\n")
-
             citations = self.handle_response_and_cleanup(full_response, metadata_list)
             self.signals.citation_signal.emit(citations)
         except Exception as e:
