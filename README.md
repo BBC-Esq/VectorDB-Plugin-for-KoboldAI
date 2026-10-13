@@ -25,6 +25,7 @@ It comes with **kobold_wiki**, a ready-made database of the entire official Kobo
 - [Part 4: Ask questions](#part-4-ask-questions)
 - [Next time](#next-time)
 - [Tips](#tips)
+- [Embedding models](#embedding-models)
 - [The command line](#the-command-line)
 - [Keeping the KoboldCpp wiki database current](#keeping-the-koboldcpp-wiki-database-current)
 - [Troubleshooting](#troubleshooting)
@@ -165,7 +166,7 @@ Ask the AI to create one, giving it a name and the full path of a folder or file
 
 > Create a vector database called recipes from the files in D:\Recipes
 
-Approve its calls. The database is built in the background, and the AI can check on it for you. A few files take under a minute; large folders can take much longer, and you can keep chatting meanwhile.
+Approve its calls. The database is built in the background, and the AI can check on it for you. A few files take under a minute; large folders can take much longer, and you can keep chatting meanwhile. The AI chooses an embedding model that suits the language of your files; see [Embedding models](#embedding-models).
 
 <p align="center"><img src="docs/images/lite-7-create.png" alt="Kobold Lite showing the AI creating the recipes database and reporting that it's ready"></p>
 
@@ -190,6 +191,28 @@ The program reads PDF, Word, text, Markdown, HTML, e-mail, spreadsheet, RTF and 
 - **Scanned PDFs** have no text to search. Mention that your PDFs are scans and the AI can make them searchable first; it saves a searchable copy named `NAME_OCR.pdf` next to each one.
 - **The first search is slower**, about 10 seconds, because the embedding model has to load. Later searches are quick.
 - **Deleting a database** is only possible from the command line, so the AI can never delete one.
+
+## Embedding models
+
+Each database is built with one embedding model, which turns text into the numbers a search compares. When the AI creates a database, it picks a model for the language of your files using the rankings below. You can also name one yourself, for example "Create a database called notes from C:\Notes using geevec". A model is downloaded the first time a database uses it.
+
+Scores are retrieval benchmark results; higher is better.
+
+### English documents
+
+| Rank | Model | English retrieval | Legal retrieval (RTEB) | Download size | Dimensions |
+|:---:|---|:---:|:---:|---:|---:|
+| 1 | [Yuan-embedding-2.0-en](https://huggingface.co/IEITYuan/Yuan-embedding-2.0-en) | **70.69** | — | 1,192 MB | 1,024 |
+| 2 | [Jasper-Token-Compression-600M](https://huggingface.co/infgrad/Jasper-Token-Compression-600M) | 66.19 | 43.93 | 1,215 MB | 2,048 |
+
+### Other languages, or a mix of languages
+
+| Rank | Model | Multilingual retrieval | English retrieval | Download size | Dimensions |
+|:---:|---|:---:|:---:|---:|---:|
+| 1 | [geevec-embeddings-1.0-lite](https://huggingface.co/geevec-ai/geevec-embeddings-1.0-lite) | **70.91** | 62.23 | 732 MB | 4,096 |
+| 2 | [harrier-oss-v1-0.6b](https://huggingface.co/microsoft/harrier-oss-v1-0.6b) | 70.75 | — | 1,190 MB | 1,024 |
+
+The kobold_wiki database uses Yuan-embedding-2.0-en, which the installer downloads. `python cli.py models` shows the same rankings and which models you've downloaded.
 
 ## The command line
 
