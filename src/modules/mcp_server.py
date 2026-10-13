@@ -21,6 +21,7 @@ SERVER_VERSION = "1.1.0"
 SEARCH_TIMEOUT = 150
 IDLE_RELEASE_SECONDS = 600
 REPEAT_WINDOW_SECONDS = 180
+MAX_PASSAGES = 20
 
 _request_lock = threading.Lock()
 _search_service = None
@@ -30,9 +31,10 @@ _recent_searches = {}
 
 def build_tools():
     from core.downloads import language_guidance, vector_models
-    from core.settings import MAX_CHUNK_SIZE, MIN_CHUNK_SIZE, build_chunking
+    from core.settings import MAX_CHUNK_SIZE, MIN_CHUNK_SIZE, build_chunking, current_settings
 
     guidance = " ".join(language_guidance())
+    default_passages = current_settings()["contexts"]
     default_chunk_size, default_overlap = build_chunking()
     return [
         {
@@ -51,10 +53,12 @@ def build_tools():
                 "Search one of the user's vector databases and return the passages from their own files that "
                 "best match a question, each labeled with its source file name. Use it whenever the user asks "
                 "about the contents of their documents. Parameters: database_name (required) is a name from "
-                "vectordb_list_databases; query (required) is the question or topic in plain words. Base your "
-                "answer on the returned passages and name the files you used. If they don't answer the question, "
-                "search once more with different words, or tell the user the documents don't seem to cover it. "
-                "Repeating the exact same search returns no new passages."
+                "vectordb_list_databases; query (required) is the question or topic in plain words; passages "
+                f"(optional) is how many passages to return, from 1 to {MAX_PASSAGES}. Only include passages when "
+                "the user asks for a specific number of passages, results or excerpts; otherwise leave it out and "
+                f"{default_passages} are returned. Base your answer on the returned passages and name the files you "
+                "used. If they don't answer the question, search once more with different words, or tell the user "
+                "the documents don't seem to cover it. Repeating the exact same search returns no new passages."
             ),
             "inputSchema": {
                 "type": "object",
@@ -66,6 +70,13 @@ def build_tools():
                     "query": {
                         "type": "string",
                         "description": "The question or topic to look for, in plain words.",
+                    },
+                    "passages": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": MAX_PASSAGES,
+                        "description": f"How many passages to return. Only set it when the user asks for a specific "
+                                       f"number; otherwise leave it out and {default_passages} are returned.",
                     },
                 },
                 "required": ["database_name", "query"],
@@ -168,6 +179,16 @@ def _error_result(text):
     return {"content": [{"type": "text", "text": text}], "isError": True}
 
 
+def _count(value):
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    try:
+        number = float(str(value).strip())
+    except ValueError:
+        return None
+    return int(number) if number >= 1 else None
+
+
 def _flag(value):
     if isinstance(value, str):
         return value.strip().lower() in ("true", "yes", "1", "on")
@@ -250,8 +271,10 @@ def tool_search(arguments):
         return _error_result(f"No database named '{database_name}'. Available databases: {listed}.")
 
     settings = current_settings()
-    options = {"k": settings["contexts"], "score_threshold": settings["similarity"], "search_term": "", "document_types": ""}
-    key = (database_name, query, settings["contexts"], settings["similarity"])
+    requested = _count(arguments.get("passages"))
+    passages = min(requested, MAX_PASSAGES) if requested else settings["contexts"]
+    options = {"k": passages, "score_threshold": settings["similarity"], "search_term": "", "document_types": ""}
+    key = (database_name, query, passages, settings["similarity"])
     now = time.monotonic()
     for old_key, stamp in list(_recent_searches.items()):
         if now - stamp > REPEAT_WINDOW_SECONDS:
@@ -274,7 +297,10 @@ def tool_search(arguments):
         source = meta.get("file_name") or meta.get("file_path") or "unknown source"
         cleaned = re.sub(r"\n\s*\n\s*\n*", "\n\n", re.sub(r"\n[ \t]+\n", "\n\n", text).strip())
         blocks.append(f"[{index}] {source}\n{cleaned}")
-    return _text_result(f"{len(blocks)} passage(s) from '{database_name}':\n\n" + "\n\n".join(blocks))
+    limit_note = ""
+    if requested and requested > MAX_PASSAGES:
+        limit_note = f"(A search returns at most {MAX_PASSAGES} passages, so {MAX_PASSAGES} are shown instead of {requested}.)\n\n"
+    return _text_result(limit_note + f"{len(blocks)} passage(s) from '{database_name}':\n\n" + "\n\n".join(blocks))
 
 
 def tool_create_database(arguments):
