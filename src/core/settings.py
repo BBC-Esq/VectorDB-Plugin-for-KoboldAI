@@ -1,9 +1,10 @@
 import json
+import math
 from pathlib import Path
 
 import yaml
 
-from core.constants import PROJECT_ROOT, VISION_MODELS
+from core.constants import MAX_CHUNK_SIZE, MIN_CHUNK_SIZE, PROJECT_ROOT, VISION_MODELS
 from core.locks import config_lock
 from core.utilities import save_config_atomically
 
@@ -14,8 +15,7 @@ PIPELINE_PRESET_NAMES = ("minimal", "low", "normal", "high", "maximum")
 SETTINGS = {
     "embedding-model": "Embedding model used to create new databases",
     "vision-model": "Vision model that describes images while a database is created",
-    "chunk-size": "Characters in each chunk of a new database",
-    "chunk-overlap": "Characters shared by neighboring chunks",
+    "chunk-size": "Characters in each chunk of a new database; neighboring chunks always overlap by half of it",
     "create-device": "Device that creates databases: cpu or cuda",
     "search-device": "Device that searches databases: cpu or cuda",
     "half": "Use half precision on the GPU: on or off",
@@ -107,7 +107,6 @@ def current_settings(config=None):
         "embedding-model": model["name"] if model else (Path(model_path).name if model_path else None),
         "vision-model": vision.get("chosen_model"),
         "chunk-size": database.get("chunk_size", defaults.chunk_size),
-        "chunk-overlap": database.get("chunk_overlap", defaults.chunk_overlap),
         "create-device": compute.get("database_creation", "cpu"),
         "search-device": compute.get("database_query", "cpu"),
         "half": "on" if database.get("half", defaults.half) else "off",
@@ -136,21 +135,43 @@ def _parse_switch(key, value):
     raise ValueError(f"{key} must be on or off.")
 
 
-def set_chunking(chunk_size=None, chunk_overlap=None):
-    defaults = _defaults()
+def chunk_overlap_for(chunk_size):
+    return math.ceil(chunk_size / 2)
+
+
+def check_chunk_size(value):
+    try:
+        number = float(str(value).strip())
+    except ValueError:
+        number = None
+    if number is None or number != int(number) or not MIN_CHUNK_SIZE <= number <= MAX_CHUNK_SIZE:
+        raise ValueError(f"The chunk size must be a whole number of characters from {MIN_CHUNK_SIZE} to {MAX_CHUNK_SIZE}.")
+    return int(number)
+
+
+def set_chunk_size(chunk_size):
+    size = check_chunk_size(chunk_size)
 
     def mutate(config):
         database = _section(config, "database")
-        size = chunk_size if chunk_size is not None else database.get("chunk_size", defaults.chunk_size)
-        overlap = chunk_overlap if chunk_overlap is not None else database.get("chunk_overlap", defaults.chunk_overlap)
-        if not 1 <= size <= 100000:
-            raise ValueError("chunk-size must be between 1 and 100000.")
-        if not 0 <= overlap < size:
-            raise ValueError(f"chunk-overlap ({overlap}) must be at least 0 and smaller than chunk-size ({size}).")
         database["chunk_size"] = size
-        database["chunk_overlap"] = overlap
+        database["chunk_overlap"] = chunk_overlap_for(size)
 
     update_config(mutate)
+    return size
+
+
+def build_chunking(requested=None, config=None):
+    if requested is not None:
+        size = check_chunk_size(requested)
+    else:
+        config = read_config() if config is None else config
+        database = config.get("database") if isinstance(config.get("database"), dict) else {}
+        try:
+            size = check_chunk_size(database.get("chunk_size", _defaults().chunk_size))
+        except ValueError:
+            size = _defaults().chunk_size
+    return size, chunk_overlap_for(size)
 
 
 def resolve_vision_model(name):
@@ -183,13 +204,8 @@ def change_setting(key, value):
             raise ValueError(f"{name} needs a supported NVIDIA GPU, which this computer does not have.")
         update_config(lambda config: _section(config, "vision").__setitem__("chosen_model", name))
         return name
-    if key in ("chunk-size", "chunk-overlap"):
-        number = _parse_int(key, value, 1 if key == "chunk-size" else 0, 100000)
-        if key == "chunk-size":
-            set_chunking(chunk_size=number)
-        else:
-            set_chunking(chunk_overlap=number)
-        return number
+    if key == "chunk-size":
+        return set_chunk_size(value)
     if key in ("create-device", "search-device"):
         device = str(value).strip().lower()
 

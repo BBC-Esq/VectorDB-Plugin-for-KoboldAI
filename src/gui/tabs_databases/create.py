@@ -8,12 +8,12 @@ from PySide6.QtWidgets import QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QM
 from gui.tabs_databases.choose_documents import choose_documents_directory, SymlinkWorker
 from core.utilities import my_cprint, save_config_atomically
 from core.databases import DatabaseBuild, check_preconditions_for_db_creation
-from core.settings import set_embedding_model
+from core.settings import build_chunking, chunk_overlap_for, set_chunk_size, set_embedding_model
 from core.staging import DOCS_DIR, collect_files, remove_staged_file, staged_files
 from core.downloads import is_vector_model_downloaded, model_directory, model_directory_name, vector_models
 from gui.download_model import model_downloaded_signal
 from gui.helpers import open_file, show_pdfs_need_ocr_dialog
-from core.constants import TOOLTIPS, PROJECT_ROOT
+from core.constants import MAX_CHUNK_SIZE, MIN_CHUNK_SIZE, TOOLTIPS, PROJECT_ROOT
 
 
 class VectorDBWorker(QThread):
@@ -199,9 +199,10 @@ class DatabasesTab(QWidget):
         row.addWidget(self.device_combo)
         row.addSpacing(12)
 
+        chunk_size, chunk_overlap = build_chunking()
         row.addWidget(QLabel("Chunk Size:"))
-        self.chunk_size_edit = QLineEdit(str(db_cfg.get("chunk_size", 700)))
-        self.chunk_size_edit.setValidator(QIntValidator(1, 100000, self))
+        self.chunk_size_edit = QLineEdit(str(chunk_size))
+        self.chunk_size_edit.setValidator(QIntValidator(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE, self))
         self.chunk_size_edit.setToolTip(TOOLTIPS["CHUNK_SIZE"])
         self.chunk_size_edit.setMaximumWidth(90)
         self.chunk_size_edit.textEdited.connect(self._on_chunk_text_edited)
@@ -209,11 +210,10 @@ class DatabasesTab(QWidget):
         row.addSpacing(12)
 
         row.addWidget(QLabel("Overlap:"))
-        self.chunk_overlap_edit = QLineEdit(str(db_cfg.get("chunk_overlap", 250)))
-        self.chunk_overlap_edit.setValidator(QIntValidator(0, 100000, self))
-        self.chunk_overlap_edit.setToolTip(TOOLTIPS["CHUNK_OVERLAP"])
+        self.chunk_overlap_edit = QLineEdit(str(chunk_overlap))
+        self.chunk_overlap_edit.setReadOnly(True)
+        self.chunk_overlap_edit.setToolTip("Always half the chunk size, rounded up.")
         self.chunk_overlap_edit.setMaximumWidth(90)
-        self.chunk_overlap_edit.textEdited.connect(self._on_chunk_text_edited)
         row.addWidget(self.chunk_overlap_edit)
         row.addSpacing(12)
 
@@ -273,30 +273,23 @@ class DatabasesTab(QWidget):
 
     def _commit_chunk_settings(self):
         size_text = self.chunk_size_edit.text().strip()
-        overlap_text = self.chunk_overlap_edit.text().strip()
-
-        if not size_text or not overlap_text:
+        if not size_text:
             return
 
         size = int(size_text)
-        overlap = int(overlap_text)
-
-        invalid = size <= 0 or overlap >= size
-        self._mark_invalid(self.chunk_size_edit, size <= 0)
-        self._mark_invalid(self.chunk_overlap_edit, overlap >= size)
+        invalid = not MIN_CHUNK_SIZE <= size <= MAX_CHUNK_SIZE
+        self._mark_invalid(self.chunk_size_edit, invalid)
         if invalid:
             return
 
+        overlap = chunk_overlap_for(size)
+        self.chunk_overlap_edit.setText(str(overlap))
         current = self._read_config().get("database") or {}
         if current.get("chunk_size") == size and current.get("chunk_overlap") == overlap:
             return
 
-        def mutate(config):
-            db = config.setdefault("database", {})
-            db["chunk_size"] = size
-            db["chunk_overlap"] = overlap
-
-        self._write_config(mutate)
+        set_chunk_size(size)
+        self._config_mtime = None
 
     def _on_half_toggled(self, checked):
         self.half_checkbox.setEnabled(False)

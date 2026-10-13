@@ -226,8 +226,9 @@ def _remove_temp_root(path):
 
 
 class DatabaseBuild:
-    def __init__(self, database_name):
+    def __init__(self, database_name, chunk_size=None):
         self.database_name = database_name
+        self.requested_chunk_size = chunk_size
         self.process = None
         self.cancelled = False
         self.completed = False
@@ -242,15 +243,16 @@ class DatabaseBuild:
             return self._run(on_line)
 
     def _run(self, on_line):
+        from core.settings import build_chunking
+
         config = read_config()
-        database_settings = config.get("database") if isinstance(config.get("database"), dict) else {}
         self.model = config.get("EMBEDDING_MODEL_NAME")
-        self.chunk_size = database_settings.get("chunk_size")
-        self.chunk_overlap = database_settings.get("chunk_overlap")
+        self.chunk_size, self.chunk_overlap = build_chunking(self.requested_chunk_size, config)
         temp_root = tempfile.mkdtemp(prefix="vectordb_build_")
         exit_code = -1
         try:
-            env = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8", "TMPDIR": temp_root}
+            env = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8", "TMPDIR": temp_root,
+                   "VECTORDB_CHUNK_SIZE": str(self.chunk_size), "VECTORDB_CHUNK_OVERLAP": str(self.chunk_overlap)}
             self.process = subprocess.Popen(
                 build_command(self.database_name),
                 stdout=subprocess.PIPE,

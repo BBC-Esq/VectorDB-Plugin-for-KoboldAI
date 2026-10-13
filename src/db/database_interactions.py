@@ -528,8 +528,8 @@ class CreateVectorDB:
 
         config_data = get_config()
         EMBEDDING_MODEL_NAME = config_data.EMBEDDING_MODEL_NAME
-        chunk_size = config_data.database.chunk_size
-        chunk_overlap = config_data.database.chunk_overlap
+        chunk_size = int(os.environ.get("VECTORDB_CHUNK_SIZE") or config_data.database.chunk_size)
+        chunk_overlap = int(os.environ.get("VECTORDB_CHUNK_OVERLAP") or config_data.database.chunk_overlap)
 
         tmp_dir = tempfile.mkdtemp(prefix="vectordb_create_")
         tmp_path = Path(tmp_dir)

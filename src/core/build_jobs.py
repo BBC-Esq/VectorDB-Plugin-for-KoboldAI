@@ -82,11 +82,11 @@ def running_job():
     return next((s for s in all_statuses() if job_is_running(s)), None)
 
 
-def plan_build(name, paths, embedding_model=None, clear_waiting_files=False):
+def plan_build(name, paths, embedding_model=None, clear_waiting_files=False, chunk_size=None):
     from core.databases import database_name_problem, list_databases
     from core.downloads import is_vector_model_downloaded, language_guidance, resolve_vector_model, vector_model_for_path
     from core.locks import busy_message, current_operation
-    from core.settings import read_config
+    from core.settings import build_chunking, read_config
     from core.staging import collect_files, staged_files
 
     name = (name or "").strip()
@@ -101,6 +101,7 @@ def plan_build(name, paths, embedding_model=None, clear_waiting_files=False):
     holder = current_operation()
     if holder is not None:
         raise ValueError(busy_message(holder))
+    size, overlap = build_chunking(chunk_size)
     if isinstance(paths, str):
         paths = [p for p in paths.replace(";", "\n").splitlines()]
     paths = [str(p).strip().strip('"') for p in (paths or []) if str(p).strip()]
@@ -138,11 +139,15 @@ def plan_build(name, paths, embedding_model=None, clear_waiting_files=False):
         "unsupported": len(selection.unsupported),
         "model": model,
         "download": not is_vector_model_downloaded(model),
+        "chunk_size": size,
+        "chunk_overlap": overlap,
+        "chunk_size_requested": chunk_size is not None,
     }
 
 
-def start_build_job(name, paths, embedding_model=None, ocr_scanned_pdfs=False, clear_waiting_files=False):
-    plan = plan_build(name, paths, embedding_model, clear_waiting_files)
+def start_build_job(name, paths, embedding_model=None, ocr_scanned_pdfs=False, clear_waiting_files=False,
+                    chunk_size=None):
+    plan = plan_build(name, paths, embedding_model, clear_waiting_files, chunk_size)
     name = plan["name"]
     status = {
         "name": name,
@@ -151,6 +156,7 @@ def start_build_job(name, paths, embedding_model=None, ocr_scanned_pdfs=False, c
         "model": plan["model"]["name"],
         "model_size_mb": plan["model"].get("size_mb"),
         "files": plan["files"],
+        "chunk_size": plan["chunk_size"] if plan["chunk_size_requested"] else None,
         "ocr_scanned_pdfs": bool(ocr_scanned_pdfs),
         "clear_waiting_files": bool(clear_waiting_files),
         "started": time.time(),
@@ -352,7 +358,7 @@ def _run(job):
         clear_staged_files()
         return job.finish("failed", message)
     job.update(state="building")
-    build = DatabaseBuild(job.name)
+    build = DatabaseBuild(job.name, chunk_size=status.get("chunk_size"))
     progress = BuildProgress()
     finished = threading.Event()
 

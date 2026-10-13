@@ -30,8 +30,10 @@ _recent_searches = {}
 
 def build_tools():
     from core.downloads import language_guidance, vector_models
+    from core.settings import MAX_CHUNK_SIZE, MIN_CHUNK_SIZE, build_chunking
 
     guidance = " ".join(language_guidance())
+    default_chunk_size, default_overlap = build_chunking()
     return [
         {
             "name": "vectordb_list_databases",
@@ -79,7 +81,10 @@ def build_tools():
                 "characters using only lowercase letters, numbers, hyphens and underscores. paths (required) is "
                 "a list of full paths to files or folders, for example [\"C:\\\\Users\\\\Name\\\\Documents\\\\Cases\"]; "
                 "folders include all their subfolders. embedding_model (optional) should match the language of "
-                f"the documents. {guidance} If it is left out, the model used last time is used. "
+                f"the documents. {guidance} If it is left out, the model used last time is used. chunk_size "
+                f"(optional) is how many characters go in each chunk, from {MIN_CHUNK_SIZE} to {MAX_CHUNK_SIZE}; "
+                "only include it when the user asks for a particular chunk size, otherwise leave it out and the "
+                f"default of {default_chunk_size} is used. Neighboring chunks always overlap by half the chunk size. "
                 "ocr_scanned_pdfs (optional, true or false) first makes scanned PDFs that have no text "
                 "searchable, saving a searchable copy named NAME_OCR.pdf next to each one; ask the user before "
                 "using it. clear_waiting_files (optional, true or false) removes files left waiting from an "
@@ -101,6 +106,14 @@ def build_tools():
                         "type": "string",
                         "enum": [m["name"] for m in vector_models()],
                         "description": f"Embedding model that suits the documents' language. {guidance}",
+                    },
+                    "chunk_size": {
+                        "type": "integer",
+                        "minimum": MIN_CHUNK_SIZE,
+                        "maximum": MAX_CHUNK_SIZE,
+                        "description": f"Characters in each chunk. Only set it when the user asks for a particular "
+                                       f"chunk size; otherwise leave it out and {default_chunk_size} is used. "
+                                       f"Neighboring chunks overlap by half of it ({default_overlap} by default).",
                     },
                     "ocr_scanned_pdfs": {
                         "type": "boolean",
@@ -270,6 +283,7 @@ def tool_create_database(arguments):
     paths = arguments.get("paths")
     if paths is None and arguments.get("path"):
         paths = [arguments["path"]]
+    chunk_size = arguments.get("chunk_size")
     release_search()
     plan = start_build_job(
         arguments.get("database_name") or "",
@@ -277,12 +291,14 @@ def tool_create_database(arguments):
         embedding_model=(arguments.get("embedding_model") or "").strip() or None,
         ocr_scanned_pdfs=_flag(arguments.get("ocr_scanned_pdfs")),
         clear_waiting_files=_flag(arguments.get("clear_waiting_files")),
+        chunk_size=None if chunk_size in (None, "") else chunk_size,
     )
     model = plan["model"]
     text = f"Started creating '{plan['name']}' from {plan['files']} file(s) with {model['name']}"
     if plan["download"]:
         text += f", which will be downloaded first (about {model['size_mb']} MB)"
-    text += ". It runs in the background; check its progress with vectordb_build_status."
+    text += (f", using {plan['chunk_size']}-character chunks that overlap by {plan['chunk_overlap']}. "
+             "It runs in the background; check its progress with vectordb_build_status.")
     if plan["unsupported"]:
         text += f" {plan['unsupported']} file(s) of types this program can't read will be skipped."
     return _text_result(text)

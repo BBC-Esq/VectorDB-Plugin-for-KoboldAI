@@ -13,9 +13,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 os.chdir(PROJECT_ROOT)
 
+from core.constants import MAX_CHUNK_SIZE, MIN_CHUNK_SIZE
+
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff"}
 DOCUMENT_TYPES = ("document", "image", "audio")
-BUILD_SETTINGS = {"embedding-model", "vision-model", "chunk-size", "chunk-overlap", "create-device", "half", "pipeline"}
+BUILD_SETTINGS = {"embedding-model", "vision-model", "chunk-size", "create-device", "half", "pipeline"}
 
 EXAMPLES = """examples:
   python cli.py models
@@ -284,7 +286,7 @@ def cmd_create(args):
     )
     from core.initialize import prepare
     from core.locks import exclusive
-    from core.settings import change_setting, current_settings, read_config, set_chunking, set_embedding_model
+    from core.settings import build_chunking, change_setting, current_settings, read_config, set_embedding_model
     from core.staging import staged_files
 
     problem = database_name_problem(args.name)
@@ -303,8 +305,6 @@ def cmd_create(args):
         if not is_vector_model_downloaded(model):
             download_model(model)
         set_embedding_model(model_directory(model))
-        if args.chunk_size is not None or args.chunk_overlap is not None:
-            set_chunking(args.chunk_size, args.chunk_overlap)
         if args.device is not None:
             change_setting("create-device", args.device)
         if args.half is not None:
@@ -327,11 +327,12 @@ def cmd_create(args):
                             "to create the database without their text.")
             return fail(message)
         settings = current_settings()
+        chunk_size, chunk_overlap = build_chunking(args.chunk_size)
         out(f"Creating '{args.name}' from {count} file(s) with {model['name']} "
-            f"(chunk size {settings['chunk-size']}, overlap {settings['chunk-overlap']}, {settings['create-device']})...")
+            f"(chunk size {chunk_size}, overlap {chunk_overlap}, {settings['create-device']})...")
         printer = BuildPrinter(args.verbose)
         started = time.monotonic()
-        result = DatabaseBuild(args.name).run(printer)
+        result = DatabaseBuild(args.name, chunk_size=args.chunk_size).run(printer)
         elapsed = time.monotonic() - started
     if result.success:
         chunks = printer.progress.chunks
@@ -669,6 +670,8 @@ def cmd_settings(args):
                   [[key, "-" if values[key] is None else values[key], SETTINGS[key]] for key in SETTINGS]))
         out('\nChange one with: python cli.py settings SETTING VALUE')
         return 0
+    if args.key == "chunk-overlap":
+        return fail("The chunk overlap is always half the chunk size, so change chunk-size instead.")
     if args.key not in SETTINGS:
         return fail(f"There is no setting called '{args.key}'. Settings: {', '.join(SETTINGS)}.")
     if args.value is None:
@@ -763,13 +766,14 @@ def build_parser():
 
     sub = command("create", cmd_create, "Create a database from the files in the list",
                   "Create a database from the files in the list, plus any files or folders given here. "
-                  "Options given here are saved as the new defaults.")
+                  "--chunk-size applies to this database only; the other options are saved as the new defaults.")
     sub.add_argument("name", help="new database name: lowercase letters, numbers, - and _")
     sub.add_argument("paths", nargs="*", metavar="PATH", help="files or folders to add first")
     sub.add_argument("--recursive", action="store_true", help="include files in subfolders of the folders given")
     sub.add_argument("--model", help="embedding model, downloaded first if needed (see 'models')")
-    sub.add_argument("--chunk-size", type=int_between(1, 100000), help="characters in each chunk")
-    sub.add_argument("--chunk-overlap", type=int_between(0, 100000), help="characters shared by neighboring chunks")
+    sub.add_argument("--chunk-size", type=int_between(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE),
+                     help="characters in each chunk of this database (default: setting 'chunk-size'); "
+                          "chunks always overlap by half of it")
     sub.add_argument("--device", choices=["cpu", "cuda"], help="device that creates the database")
     sub.add_argument("--half", action=argparse.BooleanOptionalAction, help="use half precision on the GPU")
     sub.add_argument("--vision-model", help="vision model that describes images (see 'vision')")

@@ -79,6 +79,10 @@ MIN_CUDA_COMPUTE_CAPABILITY = (7, 5)
 
 MIN_NVIDIA_DRIVER_VERSION = 580
 
+MIN_CHUNK_SIZE = 100
+
+MAX_CHUNK_SIZE = 30000
+
 priority_libs = {
     "cp311": {
         "GPU": [
