@@ -108,6 +108,8 @@ def tool_search(arguments):
         query,
         k=CONTEXTS,
         score_threshold=SIMILARITY,
+        search_term="",
+        document_types="",
     )
 
     if not contexts:
