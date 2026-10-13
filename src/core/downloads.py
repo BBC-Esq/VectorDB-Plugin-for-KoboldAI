@@ -1,5 +1,6 @@
 import atexit
 import fnmatch
+import os
 import shutil
 from pathlib import Path
 
@@ -32,10 +33,11 @@ def get_hf_token():
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
             token = (data.get("hf_access_token") or "").strip()
-            return token or None
+            if token:
+                return token
         except Exception:
-            return None
-    return None
+            pass
+    return (os.environ.get("HF_TOKEN") or "").strip() or None
 
 
 def model_repo_id(model_info):
@@ -77,6 +79,61 @@ def find_vector_model(name):
         if wanted in (model["name"].lower(), model["repo_id"].lower(), model_directory_name(model).lower()):
             return model
     return None
+
+
+def resolve_vector_model(name):
+    model = find_vector_model(name)
+    if model is not None:
+        return model
+    wanted = str(name).strip().lower()
+    matches = [m for m in vector_models() if wanted and wanted in m["name"].lower()]
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        raise ValueError(f"'{name}' matches more than one embedding model: {', '.join(m['name'] for m in matches)}.")
+    raise ValueError(f"There is no embedding model called '{name}'. "
+                     f"Choose one of: {', '.join(m['name'] for m in vector_models())}.")
+
+
+def vector_model_for_path(path):
+    if not path:
+        return None
+    folder = Path(str(path)).name
+    return next((m for m in vector_models() if model_directory_name(m) == folder), None)
+
+
+def _score(model, key):
+    value = model.get(key)
+    return value if isinstance(value, (int, float)) else None
+
+
+def model_language(model):
+    return "multilingual" if _score(model, "multilingual_retrieval") is not None else "English"
+
+
+def models_by_language():
+    english = sorted((m for m in vector_models() if model_language(m) == "English"),
+                     key=lambda m: -(_score(m, "english_retrieval") or 0))
+    multilingual = sorted((m for m in vector_models() if model_language(m) == "multilingual"),
+                          key=lambda m: -(_score(m, "multilingual_retrieval") or 0))
+    return english, multilingual
+
+
+def language_guidance():
+    english, multilingual = models_by_language()
+    lines = []
+    if english:
+        described = []
+        for m in english:
+            scores = [f"English retrieval {_score(m, 'english_retrieval')}"]
+            if _score(m, "rteb_legal") is not None:
+                scores.append(f"legal retrieval {_score(m, 'rteb_legal')}")
+            described.append(f"{m['name']} ({', '.join(scores)})")
+        lines.append("English documents: " + " or ".join(described) + ".")
+    if multilingual:
+        lines.append("Other languages or a mix of languages: " + " or ".join(
+            f"{m['name']} (multilingual retrieval {_score(m, 'multilingual_retrieval')})" for m in multilingual) + ".")
+    return lines
 
 
 class ModelDownloader:
@@ -233,7 +290,7 @@ class ModelDownloader:
             if repo_type == "private":
                 msg = f"Repository {repo_id} is private and requires a token."
                 if not self.hf_token:
-                    msg += "\n\nNo Hugging Face token found. Set one via the File menu."
+                    msg += "\n\nNo Hugging Face access token is set. Set one with 'python cli.py token set' or the File menu."
                 self._fail(msg)
             if repo_type == "not_found":
                 self._fail(f"Repository {repo_id} not found.")
@@ -242,7 +299,7 @@ class ModelDownloader:
             self._fail(
                 f"Repository {repo_id} is gated and requires access and a token.\n\n"
                 f"Visit https://huggingface.co/{repo_id} to request access, then set your "
-                f"Hugging Face token via the File menu."
+                f"Hugging Face token with 'python cli.py token set' or the File menu."
             )
         local_dir = self.get_model_directory()
         marker = local_dir / INCOMPLETE_MARKER

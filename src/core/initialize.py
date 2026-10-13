@@ -4,8 +4,9 @@ from pathlib import Path
 import logging
 
 import torch
-import yaml
 import ctranslate2
+
+from core.constants import PROJECT_ROOT
 
 def get_compute_device_info():
     available_devices = ["cpu"]
@@ -28,34 +29,38 @@ def get_supported_quantizations(device_type):
     return [q for q in desired_order if q in filtered_types]
 
 def update_config_file(**system_info):
-    full_config_path = Path('config.yaml').resolve()
+    from core.locks import config_lock
+    from core.settings import CONFIG_PATH, update_config
 
-    if not full_config_path.exists():
-        from core.config import AppConfig
-        AppConfig().save(full_config_path)
-
-    with open(full_config_path, 'r', encoding='utf-8') as stream:
-        config_data = yaml.safe_load(stream)
-
-    compute_device_info = system_info.get('Compute_Device', {})
-    config_data['Compute_Device']['available'] = compute_device_info.get('available', ['cpu'])
-    config_data['Compute_Device']['gpu_brand'] = compute_device_info.get('gpu_brand', '')
-
-    valid_devices = ['cpu', 'cuda', 'mps']
-    for key in ['database_creation', 'database_query']:
-        config_data['Compute_Device'][key] = config_data['Compute_Device'].get(key, 'cpu') if config_data['Compute_Device'].get(key) in valid_devices else 'cpu'
-
-    config_data['Supported_CTranslate2_Quantizations'] = {
+    quantizations = {
         'CPU': get_supported_quantizations('cpu'),
         'GPU': get_supported_quantizations('cuda') if torch.cuda.is_available() else []
     }
 
-    for key, value in system_info.items():
-        if key not in ('Compute_Device', 'Supported_CTranslate2_Quantizations'):
-            config_data[key] = value
+    def mutate(config_data):
+        compute = config_data.get('Compute_Device')
+        if not isinstance(compute, dict):
+            compute = {}
+            config_data['Compute_Device'] = compute
+        compute_device_info = system_info.get('Compute_Device', {})
+        compute['available'] = compute_device_info.get('available', ['cpu'])
+        compute['gpu_brand'] = compute_device_info.get('gpu_brand', '')
 
-    with open(full_config_path, 'w', encoding='utf-8') as stream:
-        yaml.safe_dump(config_data, stream)
+        valid_devices = ['cpu', 'cuda', 'mps']
+        for key in ['database_creation', 'database_query']:
+            compute[key] = compute.get(key, 'cpu') if compute.get(key) in valid_devices else 'cpu'
+
+        config_data['Supported_CTranslate2_Quantizations'] = quantizations
+
+        for key, value in system_info.items():
+            if key not in ('Compute_Device', 'Supported_CTranslate2_Quantizations'):
+                config_data[key] = value
+
+    with config_lock:
+        if not CONFIG_PATH.exists():
+            from core.config import AppConfig
+            AppConfig().save(CONFIG_PATH)
+        update_config(mutate)
 
 def check_for_necessary_folders():
     folders = [
@@ -68,7 +73,20 @@ def check_for_necessary_folders():
     ]
 
     for folder in folders:
-        Path(folder).mkdir(exist_ok=True)
+        (PROJECT_ROOT / folder).mkdir(parents=True, exist_ok=True)
+
+def prepare():
+    from core.settings import CONFIG_PATH, update_config
+
+    first_run = not CONFIG_PATH.exists()
+    compute_device_info = get_compute_device_info()
+    update_config_file(Compute_Device=compute_device_info, Platform_Info=get_platform_info())
+    if first_run and 'cuda' in compute_device_info['available']:
+        def prefer_gpu(config_data):
+            config_data['Compute_Device']['database_creation'] = 'cuda'
+            config_data['Compute_Device']['database_query'] = 'cuda'
+        update_config(prefer_gpu)
+    check_for_necessary_folders()
 
 def clear_pickle_folder():
     pickle_folder = Path('pickle')

@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -17,6 +18,7 @@ import yaml
 from core.constants import (
     BUILD_COMPLETE_MARKER, DB_FOLDER_CREATED_MARKER, NOT_ADDED_MARKER, PROJECT_ROOT, VECTOR_MODELS, VISION_MODELS,
 )
+from core.locks import exclusive
 from core.settings import CONFIG_PATH, read_config, update_config
 from core.utilities import runs_on_this_hardware
 
@@ -124,6 +126,27 @@ def max_database_name_length(project_root=PROJECT_ROOT):
     return WINDOWS_MAX_PATH - base - TILEDB_DEEPEST_RELATIVE_PATH - PATH_SAFETY_MARGIN
 
 
+def database_name_problem(database_name, script_dir=PROJECT_ROOT):
+    if not database_name or len(database_name) < 3 or database_name.lower() in ["null", "none"]:
+        return "Name must be at least 3 characters long and not be 'null' or 'none.'"
+
+    if not re.fullmatch(r"[a-z0-9_-]+", database_name):
+        return "Use only lowercase letters, numbers, hyphens and underscores in the database name."
+
+    name_limit = max_database_name_length(script_dir)
+    if len(database_name) > name_limit:
+        return ("The database name is too long for the folder this program is installed in, because Windows "
+                "limits how long file paths can be. "
+                + (f"Use a name of at most {name_limit} characters, or " if name_limit >= 3 else "")
+                + "move the program's folder to a shorter path (for example C:\\VectorDB-Plugin-for-KoboldAI).")
+
+    if (Path(script_dir) / "Vector_DB" / database_name).exists():
+        return (f"A vector database called '{database_name}' already exists—"
+                "choose a different name or delete the old one first.")
+
+    return None
+
+
 def check_preconditions_for_db_creation(script_dir, database_name, skip_ocr=False):
     if not str(script_dir).isascii():
         return False, ("The program's folder path contains accented or other non-English characters:\n\n"
@@ -131,22 +154,9 @@ def check_preconditions_for_db_creation(script_dir, database_name, skip_ocr=Fals
                        "folder. Move the program's folder to a path that uses only English letters and "
                        "numbers (for example C:\\VectorDB-Plugin-for-KoboldAI) and try again."), []
 
-    if not database_name or len(database_name) < 3 or database_name.lower() in ["null", "none"]:
-        return False, "Name must be at least 3 characters long and not be 'null' or 'none.'", []
-
-    name_limit = max_database_name_length(script_dir)
-    if len(database_name) > name_limit:
-        return False, ("The database name is too long for the folder this program is installed in, because Windows "
-                       "limits how long file paths can be. "
-                       + (f"Use a name of at most {name_limit} characters, or " if name_limit >= 3 else "")
-                       + "move the program's folder to a shorter path (for example C:\\VectorDB-Plugin-for-KoboldAI)."), []
-
-    vector_db_path = script_dir / "Vector_DB" / database_name
-    if vector_db_path.exists():
-        return False, (
-            f"A vector database called '{database_name}' already exists—"
-            "choose a different name or delete the old one first."
-        ), []
+    name_problem = database_name_problem(database_name, script_dir)
+    if name_problem:
+        return False, name_problem, []
 
     config_path = script_dir / 'config.yaml'
     if not config_path.exists():
@@ -223,8 +233,20 @@ class DatabaseBuild:
         self.completed = False
         self.created_folder = False
         self.not_added = []
+        self.model = None
+        self.chunk_size = None
+        self.chunk_overlap = None
 
     def run(self, on_line=None):
+        with exclusive(f"creating the database '{self.database_name}'"):
+            return self._run(on_line)
+
+    def _run(self, on_line):
+        config = read_config()
+        database_settings = config.get("database") if isinstance(config.get("database"), dict) else {}
+        self.model = config.get("EMBEDDING_MODEL_NAME")
+        self.chunk_size = database_settings.get("chunk_size")
+        self.chunk_overlap = database_settings.get("chunk_overlap")
         temp_root = tempfile.mkdtemp(prefix="vectordb_build_")
         exit_code = -1
         try:
@@ -242,20 +264,25 @@ class DatabaseBuild:
             )
             if self.cancelled:
                 terminate_process_tree(self.process.pid)
-            for line in self.process.stdout:
-                line = line.rstrip("\n")
-                if line.startswith(NOT_ADDED_MARKER):
-                    try:
-                        self.not_added = json.loads(line[len(NOT_ADDED_MARKER):])
-                    except ValueError:
-                        pass
-                elif line == DB_FOLDER_CREATED_MARKER:
-                    self.created_folder = True
-                elif line == BUILD_COMPLETE_MARKER:
-                    self.completed = True
-                elif line.strip() and on_line is not None:
-                    on_line(line)
-            exit_code = self.process.wait()
+            try:
+                for line in self.process.stdout:
+                    line = line.rstrip("\n")
+                    if line.startswith(NOT_ADDED_MARKER):
+                        try:
+                            self.not_added = json.loads(line[len(NOT_ADDED_MARKER):])
+                        except ValueError:
+                            pass
+                    elif line == DB_FOLDER_CREATED_MARKER:
+                        self.created_folder = True
+                    elif line == BUILD_COMPLETE_MARKER:
+                        self.completed = True
+                    elif line.strip() and on_line is not None:
+                        on_line(line)
+                exit_code = self.process.wait()
+            except KeyboardInterrupt:
+                self.cancelled = True
+                terminate_process_tree(self.process.pid)
+                exit_code = self.process.wait()
         finally:
             if self.process is not None and self.process.poll() is None:
                 terminate_process_tree(self.process.pid)
@@ -264,7 +291,7 @@ class DatabaseBuild:
 
     def _finish(self, exit_code):
         if exit_code == 0 or self.completed:
-            register_database(self.database_name)
+            register_database(self.database_name, self.model, self.chunk_size, self.chunk_overlap)
             message = ("The database finished before the cancel took effect, so it was kept."
                        if self.cancelled else "Database created successfully!")
             return BuildResult(True, False, exit_code, message, self.not_added)
@@ -281,6 +308,27 @@ class DatabaseBuild:
         process = self.process
         if process is not None and process.poll() is None:
             terminate_process_tree(process.pid)
+
+
+def search_database(name, query, contexts=None, similarity=None, contains="", document_type=""):
+    from db.database_interactions import QueryVectorDB
+
+    db = QueryVectorDB(name)
+    try:
+        texts, metadata = db.search(query, k=contexts, score_threshold=similarity,
+                                    search_term=contains or "", document_types=document_type or "")
+    finally:
+        db.close()
+    return [
+        {
+            "file_name": meta.get("file_name"),
+            "file_path": meta.get("file_path"),
+            "document_type": meta.get("document_type"),
+            "score": meta.get("similarity_score"),
+            "text": text,
+        }
+        for text, meta in zip(texts, metadata)
+    ]
 
 
 def terminate_process_tree(pid):
